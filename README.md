@@ -9,24 +9,25 @@ This project demonstrates how **gameplay intent** (player input, ball position, 
 
 ---
 
-## Why This Project (Tailored for Guerrilla)
+## Why This Project
 
-Guerrilla’s work (Horizon series, Decima Engine) is known for:
+**AegisMotionSandbox** was built explicitly with these principles in mind:
+
 - Strong separation between **gameplay systems and animation**
 - Heavy use of **procedural motion layered on authored data**
 - Robust **tooling and engine-level extensibility**
 - Characters that must feel *physical, grounded, and reactive* in systemic worlds
 
-**AegisMotionSandbox** was built explicitly with those principles in mind.
 
-### Design motivations aligned with Guerrilla:
+
+### Design that aligns with the principles so far:
 - **Data over clips**: Motion is driven by curves and profiles, not baked animations.
 - **Runtime-first architecture**: All logic lives in reusable C++ plugins.
 - **Layered procedural control**: Spine, legs, IK, and action phases are independently authored and composed.
 - **Determinism-friendly**: No randomness or hidden engine state in evaluation paths.
 - **Editor tooling**: Custom AnimGraph nodes with editor wrappers, not Blueprint hacks.
 
-This project answers the question:
+This project tries to answer the question:
 > *“How would you design a modern, systemic animation framework for action-heavy characters that must react dynamically to gameplay?”*
 
 ---
@@ -202,7 +203,7 @@ git clone https://github.com/prerak7-dev/AegisMotionSandbox.git
 
 ---
 
-## Roadmap
+## Initial Roadmap
 
 - Automatic dominant-foot selection based on ball side
 - Anticipatory motion using velocity prediction
@@ -215,8 +216,6 @@ git clone https://github.com/prerak7-dev/AegisMotionSandbox.git
 ## Author
 
 **Prerak Pandey**  
-Software Engineer → Gameplay & Animation Systems  
-Focus: Procedural animation, engine architecture, runtime tooling
 
 ---
 
