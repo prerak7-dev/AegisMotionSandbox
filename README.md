@@ -1,7 +1,7 @@
 
 # AegisMotionSandbox
 
-**AegisMotionSandbox** is a high-fidelity Unreal Engine 5 sandbox focused on **procedural character animation for competitive sports gameplay**, built to showcase **engine-level animation systems, data-driven motion, and runtime extensibility**.
+**AegisMotionSandbox** is a high-fidelity Unreal Engine 5 sandbox focused on **procedural character animation for curve profile based gameplay**, built to showcase **engine-level animation systems, data-driven motion, and runtime extensibility**.
 
 This project demonstrates how **gameplay intent** (player input, ball position, action phase) can be transformed into **deterministic, multiplayer-safe procedural motion** using custom C++ plugins, animation nodes, and curve-driven motion profiles — without relying on authored animation clips.
 
