@@ -51,15 +51,7 @@ This project tries to answer the question:
   - Wind-up
   - Contact
   - Follow-through
-  - Recovery / replant
 - Dominant-foot aware logic
-
-### Hybrid IK Integration
-- Compatible with UE5 Manny Control Rig
-- Custom Two Bone IK for:
-  - Plant foot locking
-  - Strike foot replanting
-- Correct graph ordering to avoid IK/procedural conflicts
 
 ### Curve-Driven Motion Profiles
 - All motion authored as data
