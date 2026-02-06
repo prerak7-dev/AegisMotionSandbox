@@ -5,7 +5,7 @@
 
 This project demonstrates how **gameplay intent** (player input, ball position, action phase) can be transformed into **deterministic, multiplayer-safe procedural motion** using custom C++ plugins, animation nodes, and curve-driven motion profiles — without relying on authored animation clips.
 
-> This repository is designed as a **technical portfolio project** for building complex systemic animation (e.g. Guerrilla, Remedy, Naughty Dog, Ubisoft, Epic Games).
+> This repository is designed as a **technical portfolio project** for building complex systemic animation.
 
 ---
 
