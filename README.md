@@ -11,7 +11,7 @@ This project demonstrates how **gameplay intent** (player input, ball position, 
 
 ## Why This Project
 
-**AegisMotionSandbox** was built explicitly with these principles in mind:
+**AegisMotionSandbox** was built with the vision of deploying a new gameplay experience where motion is driven procedurally through curve profiles such that different actions visually represent the emotion behind player inputs. The idea is to dynamically update curves based on the certain aspects of the players inputs such as rhythms/specific patterns and base phases of action motions on these aspects. The system will then contain checkpoint curves that depict the essence of different things: well known melodies/ gait rhythms of different animals, natural elemenets(such as wind, water,lightning), mythological entities, which will be compared to player input curves to evoke abilities based on the entities depicted along with changing player stats and visual aspects such as aura. The system is designed explicitly with these principles in mind:
 
 - Strong separation between **gameplay systems and animation**
 - Heavy use of **procedural motion layered on authored data**
