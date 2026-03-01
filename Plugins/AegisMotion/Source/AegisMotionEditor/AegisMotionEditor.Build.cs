@@ -11,22 +11,19 @@ public class AegisMotionEditor : ModuleRules
             "Core",
             "CoreUObject",
             "Engine",
-
-            // Runtime module (so we can reference FAnimNode_AegisLocalHingeBone)
             "AegisMotion",
-
-            // AnimGraph editor integration
-            "AnimGraph",
-            "AnimGraphRuntime",
-            "BlueprintGraph",
-            "UnrealEd"
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]
         {
+            "UnrealEd",
+            "AnimGraph",
+            "BlueprintGraph",
+            "GraphEditor",
+            "KismetCompiler",
             "Slate",
             "SlateCore",
-            "EditorStyle"
+            "EditorFramework",
         });
     }
 }
