@@ -1,14 +1,87 @@
-// AnimNode_AegisProceduralMotionDriver.cpp
 #include "ProceduralMotion/AnimNodes/AnimNode_AegisProceduralMotionDriver.h"
 
+#include "AegisMotionModule.h"
 #include "Algo/Reverse.h"
 #include "Animation/AnimInstanceProxy.h"
 #include "Async/Async.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
-#include "Engine/EngineTypes.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
+#include "Misc/Crc.h"
+#include "Templates/TypeHash.h"
+
+static uint32 HashCombineFastU32(uint32 A, uint32 B)
+{
+	return HashCombineFast(A, B);
+}
+
+static uint32 HashFloatStable(float Value)
+{
+	return FCrc::MemCrc32(&Value, sizeof(float));
+}
+
+static uint32 HashNameStable(const FName& Name)
+{
+	const FString AsString = Name.ToString();
+	return FCrc::StrCrc32(*AsString);
+}
+
+static uint32 HashObjectStable(const UObject* Obj)
+{
+	return PointerHash(Obj);
+}
+
+static uint32 CalculateActionAssetSignature(const UAegisProceduralActionAsset* Asset)
+{
+	if (!Asset)
+	{
+		return 0u;
+	}
+
+	uint32 Sig = 0u;
+	Sig = HashCombineFastU32(Sig, HashFloatStable(Asset->DurationSeconds));
+	Sig = HashCombineFastU32(Sig, HashObjectStable(Asset->SkeletalMesh.Get()));
+	Sig = HashCombineFastU32(Sig, static_cast<uint32>(Asset->Chains.Num()));
+
+	for (const FAegisChainDef_Inline& Chain : Asset->Chains)
+	{
+		Sig = HashCombineFastU32(Sig, HashNameStable(Chain.ChainName));
+		Sig = HashCombineFastU32(Sig, HashNameStable(Chain.StartBone));
+		Sig = HashCombineFastU32(Sig, HashNameStable(Chain.EndBone));
+		Sig = HashCombineFastU32(Sig, static_cast<uint32>(Chain.SocketBones.Num()));
+		Sig = HashCombineFastU32(Sig, static_cast<uint32>(Chain.Phases.Num()));
+
+		for (const FAegisSocketBoneDef& SocketBone : Chain.SocketBones)
+		{
+			Sig = HashCombineFastU32(Sig, HashNameStable(SocketBone.BoneName));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(SocketBone.BoneWeight));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(SocketBone.MotionProfile.DampingHalfLife));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(SocketBone.MotionProfile.SpringStrength));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(SocketBone.MotionProfile.Inertia));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(SocketBone.MotionProfile.MaxRotationSpeedDegPerSec));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(SocketBone.MotionProfile.MaxTranslationSpeedCmPerSec));
+		}
+
+		for (const FAegisActionPhaseBlendDef& Phase : Chain.Phases)
+		{
+			Sig = HashCombineFastU32(Sig, HashNameStable(Phase.PhaseName));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(Phase.StartTime01));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(Phase.PeakTime01));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(Phase.EndTime01));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(Phase.EaseInExponent));
+			Sig = HashCombineFastU32(Sig, HashFloatStable(Phase.EaseOutExponent));
+			Sig = HashCombineFastU32(Sig, static_cast<uint32>(Phase.BoneCurves.Num()));
+
+			for (const FAegisSocketBonePhaseCurves& Slot : Phase.BoneCurves)
+			{
+				Sig = HashCombineFastU32(Sig, HashNameStable(Slot.BoneName));
+			}
+		}
+	}
+
+	return Sig;
+}
 
 static TAutoConsoleVariable<int32> CVarAegisDebugProceduralDriver(
 	TEXT("aegis.Motion.DebugProceduralDriver"),
@@ -16,125 +89,23 @@ static TAutoConsoleVariable<int32> CVarAegisDebugProceduralDriver(
 	TEXT("0=off, 1=log, 2=draw debug"),
 	ECVF_Default);
 
-// Production debug quality controls
-static TAutoConsoleVariable<int32> CVarAegisDebugXRay(
-	TEXT("aegis.Motion.DebugXRay"),
-	1,
-	TEXT("0=depth-tested (occluded), 1=foreground (x-ray)"),
-	ECVF_Default);
-
-static TAutoConsoleVariable<int32> CVarAegisDebugHalo(
-	TEXT("aegis.Motion.DebugHalo"),
-	1,
-	TEXT("0=single line, 1=halo outline (black thick + colored thin)"),
-	ECVF_Default);
-
-static TAutoConsoleVariable<float> CVarAegisDebugOffsetCm(
-	TEXT("aegis.Motion.DebugOffsetCm"),
-	3.f,
-	TEXT("World-space offset (cm) applied to debug points to avoid z-fighting / skin occlusion."),
-	ECVF_Default);
-
-// Pivot curves: accept either signed (-1..1) or 0..1 centered at 0.5
 static FORCEINLINE float CurveToSignedSmart(float V)
 {
-	if (V < 0.f || V > 1.f) return V;
+	if (V < 0.f || V > 1.f)
+	{
+		return V;
+	}
 	return (V - 0.5f) * 2.f;
 }
 
-// Hinge curves (default unsigned 0..1)
 static FORCEINLINE float CurveToUnsigned01(float V)
 {
 	return FMath::Clamp(V, 0.f, 1.f);
 }
 
-// NEW: per-slot hinge curve evaluation (unsigned or signed)
-static FORCEINLINE float EvalHingeCurveSlot(const FAegisHingeCurveSlot& Slot, float T)
-{
-	if (!Slot.Angle01) return 0.f;
-
-	const float V = Slot.Angle01->GetFloatValue(T);
-
-	if (Slot.bSignedAngle)
-	{
-		// If author provided true signed values already, keep them.
-		if (V < 0.f || V > 1.f) return V;
-
-		// Otherwise treat 0..1 as centered at 0.5 -> [-1..1]
-		return (V - 0.5f) * 2.f;
-	}
-
-	// Unsigned
-	return FMath::Clamp(V, 0.f, 1.f);
-}
-
 static FORCEINLINE bool ShouldDrawDebug(const FAnimNode_AegisProceduralMotionDriver& Node)
 {
-	const int32 DebugLevel = CVarAegisDebugProceduralDriver.GetValueOnAnyThread();
-	return (Node.bDebugDraw || DebugLevel >= 2);
-}
-
-static FORCEINLINE ESceneDepthPriorityGroup GetDebugDepthGroup()
-{
-	return (CVarAegisDebugXRay.GetValueOnAnyThread() != 0) ? SDPG_Foreground : SDPG_World;
-}
-
-static FORCEINLINE FVector DebugOffsetVector(const FTransform& ComponentTM)
-{
-	const float OffCm = CVarAegisDebugOffsetCm.GetValueOnAnyThread();
-	return ComponentTM.TransformVectorNoScale(FVector(0, 0, OffCm));
-}
-
-static void AnimDrawDebugLinePro(
-	FAnimInstanceProxy* Proxy,
-	const FVector& A,
-	const FVector& B,
-	const FColor& Color,
-	float Thickness)
-{
-	if (!Proxy) return;
-
-	const bool bPersistent = false;
-	const float LifeTime = 0.f;
-	const ESceneDepthPriorityGroup DepthGroup = GetDebugDepthGroup();
-	const bool bHalo = (CVarAegisDebugHalo.GetValueOnAnyThread() != 0);
-
-	if (bHalo)
-	{
-		Proxy->AnimDrawDebugLine(A, B, FColor::Black, bPersistent, LifeTime, Thickness + 2.0f, DepthGroup);
-		Proxy->AnimDrawDebugLine(A, B, Color, bPersistent, LifeTime, Thickness, DepthGroup);
-	}
-	else
-	{
-		Proxy->AnimDrawDebugLine(A, B, Color, bPersistent, LifeTime, Thickness, DepthGroup);
-	}
-}
-
-static void AnimDrawJointCross(
-	FAnimInstanceProxy* Proxy,
-	const FVector& P,
-	float Size,
-	const FColor& C,
-	float Thickness)
-{
-	if (!Proxy) return;
-
-	AnimDrawDebugLinePro(Proxy, P - FVector(Size, 0, 0), P + FVector(Size, 0, 0), C, Thickness);
-	AnimDrawDebugLinePro(Proxy, P - FVector(0, Size, 0), P + FVector(0, Size, 0), C, Thickness);
-	AnimDrawDebugLinePro(Proxy, P - FVector(0, 0, Size), P + FVector(0, 0, Size), C, Thickness);
-}
-
-static void AnimDrawDebugAxesPro(
-	FAnimInstanceProxy* Proxy,
-	const FVector& Origin,
-	const FVector& X,
-	const FVector& Y,
-	const FVector& Z)
-{
-	if (!Proxy) return;
-	AnimDrawDebugLinePro(Proxy, Origin, Origin + X, FColor::Red, 1.8f);
-	AnimDrawDebugLinePro(Proxy, Origin, Origin + Y, FColor::Green, 1.8f);
-	AnimDrawDebugLinePro(Proxy, Origin, Origin + Z, FColor::Blue, 1.8f);
+	return Node.bDebugDraw || CVarAegisDebugProceduralDriver.GetValueOnAnyThread() >= 2;
 }
 
 static FORCEINLINE bool PoseIndexToCompact(
@@ -150,16 +121,15 @@ static FORCEINLINE bool PoseIndexToCompact(
 
 	const FMeshPoseBoneIndex MeshIdx(PoseIndex);
 	OutCompact = Bones.MakeCompactPoseIndex(MeshIdx);
-	return (OutCompact != INDEX_NONE);
+	return OutCompact != INDEX_NONE;
 }
 
-static void EnqueueDebugString(
-	UWorld* World,
-	const FVector& WorldPos,
-	const FString& Text,
-	const FColor& Color)
+static void EnqueueDebugString(UWorld* World, const FVector& WorldPos, const FString& Text, const FColor& Color)
 {
-	if (!World) return;
+	if (!World)
+	{
+		return;
+	}
 
 	TWeakObjectPtr<UWorld> WeakWorld(World);
 	AsyncTask(ENamedThreads::GameThread, [WeakWorld, WorldPos, Text, Color]()
@@ -171,101 +141,69 @@ static void EnqueueDebugString(
 		});
 }
 
-// NOTE: CSPose is non-const for UE variants where GetComponentSpaceTransform isn't const.
-static void DebugDrawChainOutlineAndAxes(
-	FAnimInstanceProxy* Proxy,
-	const FTransform& ComponentTM,
-	FCSPose<FCompactPose>& CSPose,
-	const FBoneContainer& BoneContainer,
-	const TArray<FCompactPoseBoneIndex>& ChainBones,
-	FCompactPoseBoneIndex LabelBone,
-	const FRotator& AppliedDeltaPRY_Deg,
-	const FString* OptionalExtraText,
-	float SegmentThickness)
+static void AnimDrawDebugLineSafe(FAnimInstanceProxy* Proxy, const FVector& A, const FVector& B, const FColor& Color, float Thickness)
 {
-	if (!Proxy || ChainBones.Num() == 0) return;
-
-	const FVector Off = DebugOffsetVector(ComponentTM);
-
-	for (const FCompactPoseBoneIndex& B : ChainBones)
+	if (Proxy)
 	{
-		const FTransform& BCS = CSPose.GetComponentSpaceTransform(B);
-		const FVector Pw = ComponentTM.TransformPosition(BCS.GetLocation()) + Off;
-
-		AnimDrawJointCross(Proxy, Pw, 3.5f, FColor::Cyan, 1.0f);
-
-		const FCompactPoseBoneIndex P = BoneContainer.GetParentBoneIndex(B);
-		if (P != INDEX_NONE && ChainBones.Contains(P))
-		{
-			const FTransform& PCS = CSPose.GetComponentSpaceTransform(P);
-			const FVector Ppw = ComponentTM.TransformPosition(PCS.GetLocation()) + Off;
-
-			AnimDrawDebugLinePro(Proxy, Ppw, Pw, FColor::Cyan, SegmentThickness);
-		}
-	}
-
-	if (LabelBone != INDEX_NONE)
-	{
-		const FTransform& LCS = CSPose.GetComponentSpaceTransform(LabelBone);
-		const FVector Lw = ComponentTM.TransformPosition(LCS.GetLocation()) + Off;
-
-		const FVector X = ComponentTM.TransformVector(LCS.GetUnitAxis(EAxis::X)) * 14.f;
-		const FVector Y = ComponentTM.TransformVector(LCS.GetUnitAxis(EAxis::Y)) * 14.f;
-		const FVector Z = ComponentTM.TransformVector(LCS.GetUnitAxis(EAxis::Z)) * 14.f;
-
-		AnimDrawDebugAxesPro(Proxy, Lw, X, Y, Z);
-
-		if (USkeletalMeshComponent* SkelComp = Proxy->GetSkelMeshComponent())
-		{
-			if (UWorld* World = SkelComp->GetWorld())
-			{
-				FString S = FString::Printf(
-					TEXT("PRY (deg)\nP: %.2f\nY: %.2f\nR: %.2f"),
-					AppliedDeltaPRY_Deg.Pitch,
-					AppliedDeltaPRY_Deg.Yaw,
-					AppliedDeltaPRY_Deg.Roll);
-
-				if (OptionalExtraText && OptionalExtraText->Len() > 0)
-				{
-					S += TEXT("\n");
-					S += *OptionalExtraText;
-				}
-
-				EnqueueDebugString(World, Lw + FVector(0, 0, 20.f), S, FColor::Yellow);
-			}
-		}
+		Proxy->AnimDrawDebugLine(A, B, Color, false, 0.f, Thickness, SDPG_Foreground);
 	}
 }
 
-static void DebugDrawHingeAngles(
+static void DrawDebugConeApprox(
 	FAnimInstanceProxy* Proxy,
-	const FTransform& ComponentTM,
-	FCSPose<FCompactPose>& CSPose,
-	const TArray<FCompactPoseBoneIndex>& HingeBones,
-	const TArray<float>& SmoothedAnglesDeg)
+	const FVector& Origin,
+	const FVector& Axis,
+	float Length,
+	float AngleDeg,
+	const FColor& Color)
 {
-	if (!Proxy || HingeBones.Num() == 0) return;
-
-	USkeletalMeshComponent* SkelComp = Proxy->GetSkelMeshComponent();
-	if (!SkelComp) return;
-
-	UWorld* World = SkelComp->GetWorld();
-	if (!World) return;
-
-	const FVector Off = DebugOffsetVector(ComponentTM);
-
-	const int32 N = FMath::Min(HingeBones.Num(), SmoothedAnglesDeg.Num());
-	for (int32 i = 0; i < N; ++i)
+	if (!Proxy || Length <= KINDA_SMALL_NUMBER)
 	{
-		const FTransform& BCS = CSPose.GetComponentSpaceTransform(HingeBones[i]);
-		const FVector Pw = ComponentTM.TransformPosition(BCS.GetLocation()) + Off;
-
-		const FString S = FString::Printf(TEXT("[HINGE] %.1f deg"), SmoothedAnglesDeg[i]);
-		EnqueueDebugString(World, Pw + FVector(0, 0, 18.f), S, FColor::White);
+		return;
 	}
-}
 
-// ---------------- Node ----------------
+	const FVector NAxis = Axis.GetSafeNormal();
+	if (NAxis.IsNearlyZero())
+	{
+		return;
+	}
+
+	FVector BasisA = FVector::CrossProduct(NAxis, FVector::UpVector);
+	if (BasisA.IsNearlyZero())
+	{
+		BasisA = FVector::CrossProduct(NAxis, FVector::RightVector);
+	}
+	BasisA = BasisA.GetSafeNormal();
+	const FVector BasisB = FVector::CrossProduct(NAxis, BasisA).GetSafeNormal();
+
+	const float Radius = Length * FMath::Tan(FMath::DegreesToRadians(FMath::Clamp(AngleDeg, 1.f, 89.f)));
+	const FVector Tip = Origin + NAxis * Length;
+
+	constexpr int32 Segments = 12;
+	FVector First = FVector::ZeroVector;
+	FVector Prev = FVector::ZeroVector;
+
+	for (int32 Index = 0; Index < Segments; ++Index)
+	{
+		const float Angle = (2.f * PI * static_cast<float>(Index)) / static_cast<float>(Segments);
+		const FVector Rim = Tip + (BasisA * FMath::Cos(Angle) + BasisB * FMath::Sin(Angle)) * Radius;
+
+		AnimDrawDebugLineSafe(Proxy, Origin, Rim, Color, 0.8f);
+
+		if (Index > 0)
+		{
+			AnimDrawDebugLineSafe(Proxy, Prev, Rim, Color, 0.6f);
+		}
+		else
+		{
+			First = Rim;
+		}
+
+		Prev = Rim;
+	}
+
+	AnimDrawDebugLineSafe(Proxy, Prev, First, Color, 0.6f);
+}
 
 FAnimNode_AegisProceduralMotionDriver::FAnimNode_AegisProceduralMotionDriver()
 {
@@ -274,7 +212,12 @@ FAnimNode_AegisProceduralMotionDriver::FAnimNode_AegisProceduralMotionDriver()
 void FAnimNode_AegisProceduralMotionDriver::Initialize_AnyThread(const FAnimationInitializeContext& Context)
 {
 	Super::Initialize_AnyThread(Context);
+
 	ActionChainCaches.Reset();
+	CachedAsset.Reset();
+	CachedAssetSignature = 0u;
+	LastSeenActionInstanceId = 0u;
+	bHasCapturedStartPose = false;
 }
 
 void FAnimNode_AegisProceduralMotionDriver::UpdateInternal(const FAnimationUpdateContext& Context)
@@ -285,16 +228,19 @@ void FAnimNode_AegisProceduralMotionDriver::UpdateInternal(const FAnimationUpdat
 bool FAnimNode_AegisProceduralMotionDriver::IsValidToEvaluate(const USkeleton* Skeleton, const FBoneContainer& RequiredBones)
 {
 	const UAegisProceduralActionAsset* Asset = nullptr;
-	float Time01 = 0.f, ActionAlpha = 0.f;
+	float Time01 = 0.f;
+	float ActionAlpha = 0.f;
 	ResolveActionState(Asset, Time01, ActionAlpha);
-	return (Asset && Asset->Chains.Num() > 0);
+	return Asset != nullptr;
 }
 
 void FAnimNode_AegisProceduralMotionDriver::InitializeBoneReferences(const FBoneContainer& RequiredBones)
 {
 	const UAegisProceduralActionAsset* Asset = nullptr;
-	float Time01 = 0.f, ActionAlpha = 0.f;
+	float Time01 = 0.f;
+	float ActionAlpha = 0.f;
 	ResolveActionState(Asset, Time01, ActionAlpha);
+
 	if (Asset)
 	{
 		EnsureCachesBuilt(Asset, RequiredBones);
@@ -310,42 +256,122 @@ void FAnimNode_AegisProceduralMotionDriver::ResolveActionState(
 	OutTime01 = 0.f;
 	OutAlpha = 0.f;
 
-	if (ActionComponent && ActionComponent->IsActionActive())
+	if (ActionComponent)
 	{
-		OutAsset = ActionComponent->GetCurrentActionAsset();
-		OutTime01 = ActionComponent->GetActionTime01();
-		OutAlpha = ActionComponent->GetActionAlpha();
-		return;
+		const UAegisProceduralActionAsset* ComponentAsset = ActionComponent->GetCurrentActionAsset();
+		const bool bRunning = ActionComponent->IsActionActive();
+		const bool bEditorPreview =
+#if WITH_EDITOR
+		(ActionComponent->bDebugScrubEnabled && ComponentAsset != nullptr);
+#else
+			false;
+#endif
+
+		if ((bRunning || bEditorPreview) && ComponentAsset != nullptr)
+		{
+			OutAsset = ComponentAsset;
+			OutTime01 = FMath::Clamp(ActionComponent->GetActionTime01(), 0.f, 1.f);
+
+			if (bEditorPreview)
+			{
+				OutAlpha = 1.f;
+			}
+			else
+			{
+				OutAlpha = FMath::Clamp(ActionComponent->GetActionAlpha(), 0.f, 1.f);
+			}
+
+			return;
+		}
+
+		if (ComponentAsset != nullptr)
+		{
+			OutAsset = ComponentAsset;
+			OutTime01 = 0.f;
+			OutAlpha = 0.f;
+			return;
+		}
 	}
 
 	if (ActionAssetOverride)
 	{
 		OutAsset = ActionAssetOverride;
-		OutTime01 = ActionTime01Override;
-		OutAlpha = ActionAlphaOverride;
+		OutTime01 = FMath::Clamp(ActionTime01Override, 0.f, 1.f);
+		OutAlpha = FMath::Clamp(ActionAlphaOverride, 0.f, 1.f);
 	}
 }
 
-void FAnimNode_AegisProceduralMotionDriver::EnsureCachesBuilt(
-	const UAegisProceduralActionAsset* Asset,
-	const FBoneContainer& RequiredBones)
+void FAnimNode_AegisProceduralMotionDriver::ResetAllSmoothedStates()
 {
-	if (!Asset) return;
-
-	if (ActionChainCaches.Num() != Asset->Chains.Num())
+	for (FAegisActionChainRuntimeCache& Cache : ActionChainCaches)
 	{
-		ActionChainCaches.SetNum(Asset->Chains.Num());
-		for (FAegisActionChainRuntimeCache& C : ActionChainCaches)
+		for (FAegisSocketBoneRuntimeCache& SocketBone : Cache.SocketBones)
 		{
-			C.Reset();
+			SocketBone.SmoothedRotDeg = FRotator::ZeroRotator;
+			SocketBone.SmoothedTransPS = FVector::ZeroVector;
+			SocketBone.RotVelocityDeg = FRotator::ZeroRotator;
+			SocketBone.TransVelocityPS = FVector::ZeroVector;
+			SocketBone.CapturedLocalTransform = FTransform::Identity;
 		}
 	}
 
-	for (int32 i = 0; i < Asset->Chains.Num(); ++i)
+	bHasCapturedStartPose = false;
+}
+
+void FAnimNode_AegisProceduralMotionDriver::CaptureStartPose(FComponentSpacePoseContext& Output)
+{
+	for (FAegisActionChainRuntimeCache& Cache : ActionChainCaches)
 	{
-		if (ActionChainCaches[i].ChainBones.Num() == 0)
+		for (FAegisSocketBoneRuntimeCache& SocketBone : Cache.SocketBones)
 		{
-			BuildCacheForChain(ActionChainCaches[i], Asset->Chains[i], RequiredBones);
+			if (SocketBone.BoneIndex == INDEX_NONE)
+			{
+				continue;
+			}
+
+			SocketBone.CapturedLocalTransform = Output.Pose.GetLocalSpaceTransform(SocketBone.BoneIndex);
+			SocketBone.SmoothedRotDeg = FRotator::ZeroRotator;
+			SocketBone.SmoothedTransPS = FVector::ZeroVector;
+			SocketBone.RotVelocityDeg = FRotator::ZeroRotator;
+			SocketBone.TransVelocityPS = FVector::ZeroVector;
+		}
+	}
+
+	bHasCapturedStartPose = true;
+}
+
+void FAnimNode_AegisProceduralMotionDriver::EnsureCachesBuilt(const UAegisProceduralActionAsset* Asset, const FBoneContainer& RequiredBones)
+{
+	if (!Asset)
+	{
+		return;
+	}
+
+	const uint32 NewSignature = CalculateActionAssetSignature(Asset);
+	const bool bNeedFullRebuild =
+		(CachedAsset.Get() != Asset) ||
+		(CachedAssetSignature != NewSignature) ||
+		(ActionChainCaches.Num() != Asset->Chains.Num());
+
+	if (bNeedFullRebuild)
+	{
+		ActionChainCaches.SetNum(Asset->Chains.Num());
+
+		for (FAegisActionChainRuntimeCache& Cache : ActionChainCaches)
+		{
+			Cache.Reset();
+		}
+
+		CachedAsset = Asset;
+		CachedAssetSignature = NewSignature;
+		bHasCapturedStartPose = false;
+	}
+
+	for (int32 Index = 0; Index < Asset->Chains.Num(); ++Index)
+	{
+		if (ActionChainCaches[Index].ChainBones.Num() == 0 && ActionChainCaches[Index].SocketBones.Num() == 0)
+		{
+			BuildCacheForChain(ActionChainCaches[Index], Asset->Chains[Index], RequiredBones);
 		}
 	}
 }
@@ -376,215 +402,278 @@ void FAnimNode_AegisProceduralMotionDriver::BuildCacheForChain(
 
 	TArray<FCompactPoseBoneIndex> Temp;
 	FCompactPoseBoneIndex Cur = EndIdx;
-
 	int32 Safety = 0;
+
 	while (Cur != INDEX_NONE && Safety++ < 256)
 	{
 		Temp.Add(Cur);
-		if (Cur == StartIdx) break;
+
+		if (Cur == StartIdx)
+		{
+			break;
+		}
+
 		Cur = RequiredBones.GetParentBoneIndex(Cur);
 	}
 
+	if (Temp.Num() == 0 || Temp.Last() != StartIdx)
+	{
+		UE_LOG(
+			LogAegisMotion,
+			Warning,
+			TEXT("[AegisProceduralMotionDriver] Invalid chain path for '%s' (%s -> %s)"),
+			*Chain.ChainName.ToString(),
+			*Chain.StartBone.ToString(),
+			*Chain.EndBone.ToString());
+		return;
+	}
+
 	Algo::Reverse(Temp);
-	Cache.ChainBones = MoveTemp(Temp);
+	Cache.ChainBones = Temp;
 
-	FCompactPoseBoneIndex PivotIdx = StartIdx;
+	TMap<int32, FAegisSocketBoneRuntimeCache> SocketMap;
 
-	if (!Chain.PivotBone.IsNone())
+	for (const FAegisSocketBoneDef& Def : Chain.SocketBones)
 	{
-		const int32 PivotPoseIndex = RequiredBones.GetPoseBoneIndexForBoneName(Chain.PivotBone);
-		FCompactPoseBoneIndex P(INDEX_NONE);
-
-		if (PoseIndexToCompact(RequiredBones, PivotPoseIndex, P) && Cache.ChainBones.Contains(P))
-		{
-			PivotIdx = P;
-		}
-	}
-
-	Cache.PivotBone = PivotIdx;
-
-	TSet<int32> Unique;
-	for (const FAegisAutoHingePhase& Phase : Chain.HingePhases)
-	{
-		for (const FAegisHingeCurveSlot& Slot : Phase.Hinges)
-		{
-			if (Slot.HingeBone.IsNone()) continue;
-
-			const int32 PoseIdx = RequiredBones.GetPoseBoneIndexForBoneName(Slot.HingeBone);
-			FCompactPoseBoneIndex CIdx(INDEX_NONE);
-			if (PoseIndexToCompact(RequiredBones, PoseIdx, CIdx))
-			{
-				Unique.Add(CIdx.GetInt());
-			}
-		}
-	}
-
-	for (int32 Id : Unique)
-	{
-		Cache.HingeBones.Add(FCompactPoseBoneIndex(Id));
-	}
-
-	Cache.HingeBones.Sort([](const FCompactPoseBoneIndex& A, const FCompactPoseBoneIndex& B)
-		{
-			return A.GetInt() < B.GetInt();
-		});
-
-	Cache.SmoothedHingeAnglesDeg.SetNum(Cache.HingeBones.Num());
-	for (float& V : Cache.SmoothedHingeAnglesDeg) V = 0.f;
-}
-
-float FAnimNode_AegisProceduralMotionDriver::HalfLifeAlpha(float DeltaSeconds, float HalfLifeSeconds)
-{
-	if (HalfLifeSeconds <= KINDA_SMALL_NUMBER) return 1.f;
-	return 1.f - FMath::Pow(0.5f, DeltaSeconds / HalfLifeSeconds);
-}
-
-// ---------------- Pivot ----------------
-
-FRotator FAnimNode_AegisProceduralMotionDriver::EvalPivotTargetDeg(
-	const FAegisChainDef_Inline& Chain,
-	float Time01,
-	float ActionAlpha) const
-{
-	const float T = FMath::Clamp(Time01, 0.f, 1.f);
-	const float A = FMath::Clamp(ActionAlpha, 0.f, 1.f);
-
-	float Pitch = 0.f, Yaw = 0.f, Roll = 0.f;
-
-	for (const FAegisPhaseCurvesPRY& Phase : Chain.PivotPhases)
-	{
-		float Window = 1.f;
-		if (Phase.Window01) Window = Phase.Window01->GetFloatValue(T);
-		if (Window < Phase.ActiveThreshold) continue;
-
-		const float PhaseAlpha = Window;
-
-		const float P = Phase.Pitch01 ? CurveToSignedSmart(Phase.Pitch01->GetFloatValue(T)) : 0.f;
-		const float Y = Phase.Yaw01 ? CurveToSignedSmart(Phase.Yaw01->GetFloatValue(T)) : 0.f;
-		const float R = Phase.Roll01 ? CurveToSignedSmart(Phase.Roll01->GetFloatValue(T)) : 0.f;
-
-		// Robust channel driving: if a curve is assigned, it contributes (prevents mask mismatch failures)
-		const bool bDrivePitch = (Phase.Pitch01 != nullptr) || ((Chain.DrivenChannels & int32(EAegisRotChannels::Pitch)) != 0);
-		const bool bDriveYaw = (Phase.Yaw01 != nullptr) || ((Chain.DrivenChannels & int32(EAegisRotChannels::Yaw)) != 0);
-		const bool bDriveRoll = (Phase.Roll01 != nullptr) || ((Chain.DrivenChannels & int32(EAegisRotChannels::Roll)) != 0);
-
-		if (bDrivePitch) Pitch += P * Chain.MaxDegreesPRY.Pitch * PhaseAlpha;
-		if (bDriveYaw)   Yaw += Y * Chain.MaxDegreesPRY.Yaw * PhaseAlpha;
-		if (bDriveRoll)  Roll += R * Chain.MaxDegreesPRY.Roll * PhaseAlpha;
-	}
-
-	return FRotator(Pitch * A, Yaw * A, Roll * A);
-}
-
-float FAnimNode_AegisProceduralMotionDriver::DistributionWeight(
-	EAegisChainDistributionMode Mode,
-	int32 Index,
-	int32 Num,
-	int32 PivotIndex) const
-{
-	if (Num <= 0) return 0.f;
-	if (Num == 1) return 1.f;
-
-	switch (Mode)
-	{
-	case EAegisChainDistributionMode::Uniform:
-		return float(Index + 1) / float(Num);
-
-	case EAegisChainDistributionMode::RampToEnd:
-		return float(Index) / float(Num - 1);
-
-	case EAegisChainDistributionMode::PivotToEnd:
-	default:
-	{
-		if (PivotIndex < 0)
-		{
-			return float(Index) / float(Num - 1);
-		}
-		if (Index <= PivotIndex)
-		{
-			return 0.f;
-		}
-		const float Den = float((Num - 1) - PivotIndex);
-		return (Den > 0.f) ? float(Index - PivotIndex) / Den : 1.f;
-	}
-	}
-}
-
-void FAnimNode_AegisProceduralMotionDriver::ApplyPivotChain(
-	FComponentSpacePoseContext& Output,
-	TArray<FBoneTransform>& OutBoneTransforms,
-	const FAegisChainDef_Inline& Chain,
-	FAegisActionChainRuntimeCache& Cache,
-	const FRotator& TargetDeg,
-	float DT)
-{
-	if (Cache.ChainBones.Num() == 0) return;
-
-	const float S = HalfLifeAlpha(DT, Chain.SmoothingHalfLife);
-	Cache.SmoothedPivotDelta = FMath::Lerp(Cache.SmoothedPivotDelta, TargetDeg, S);
-
-	const int32 Num = Cache.ChainBones.Num();
-	const int32 PivotIndex = Cache.ChainBones.IndexOfByKey(Cache.PivotBone);
-
-	float PrevCumW = 0.f;
-	for (int32 i = 0; i < Num; ++i)
-	{
-		float CumW = DistributionWeight(Chain.DistributionMode, i, Num, PivotIndex);
-		CumW = FMath::Clamp(CumW, 0.f, 1.f);
-
-		// Smoothstep to avoid harsh kinks at the start/end of the chain.
-		CumW = CumW * CumW * (3.f - 2.f * CumW);
-
-		const float DeltaW = CumW - PrevCumW;
-		PrevCumW = CumW;
-
-		if (DeltaW <= KINDA_SMALL_NUMBER)
+		if (Def.BoneName.IsNone())
 		{
 			continue;
 		}
 
-		const FCompactPoseBoneIndex BoneIdx = Cache.ChainBones[i];
-		FTransform BoneCS = Output.Pose.GetComponentSpaceTransform(BoneIdx);
+		const int32 PoseIndex = RequiredBones.GetPoseBoneIndexForBoneName(Def.BoneName);
+		FCompactPoseBoneIndex CompactIndex(INDEX_NONE);
 
-		const FRotator DeltaRot = Cache.SmoothedPivotDelta * DeltaW;
-		const float YawRad = FMath::DegreesToRadians(DeltaRot.Yaw);
-		const float PitchRad = FMath::DegreesToRadians(DeltaRot.Pitch);
-		const float RollRad = FMath::DegreesToRadians(DeltaRot.Roll);
+		if (!PoseIndexToCompact(RequiredBones, PoseIndex, CompactIndex))
+		{
+			continue;
+		}
 
-		// Apply around stable component-space axes (reduces violent twist from bone-axis quirks).
-		const FQuat QYaw(FVector(0.f, 0.f, 1.f), YawRad);
-		const FQuat QPitch(FVector(0.f, 1.f, 0.f), PitchRad);
-		const FQuat QRoll(FVector(1.f, 0.f, 0.f), RollRad);
-		const FQuat AddQ = (QYaw * QPitch * QRoll).GetNormalized();
+		FAegisSocketBoneRuntimeCache RuntimeDef;
+		RuntimeDef.BoneName = Def.BoneName;
+		RuntimeDef.BoneIndex = CompactIndex;
+		RuntimeDef.BoneWeight = Def.BoneWeight;
+		RuntimeDef.MaxRotationDegrees = Def.Limits.MaxRotationDegrees;
+		RuntimeDef.MaxTranslationCm = Def.Limits.MaxTranslationCm;
+		RuntimeDef.MotionProfile = Def.MotionProfile;
 
-		BoneCS.SetRotation((AddQ * BoneCS.GetRotation()).GetNormalized());
-
-		Output.Pose.SetComponentSpaceTransform(BoneIdx, BoneCS);
-		OutBoneTransforms.Add(FBoneTransform(BoneIdx, BoneCS));
+		SocketMap.Add(CompactIndex.GetInt(), RuntimeDef);
 	}
 
-	if (ShouldDrawDebug(*this) && Output.AnimInstanceProxy)
+	for (const FCompactPoseBoneIndex& BoneIdx : Cache.ChainBones)
 	{
-		const FTransform& CompTM = Output.AnimInstanceProxy->GetComponentTransform();
-		const FBoneContainer& BC = Output.Pose.GetPose().GetBoneContainer();
-		FCSPose<FCompactPose>& CSPose = Output.Pose;
+		if (FAegisSocketBoneRuntimeCache* Found = SocketMap.Find(BoneIdx.GetInt()))
+		{
+			Cache.SocketBones.Add(*Found);
+			SocketMap.Remove(BoneIdx.GetInt());
+		}
+	}
 
-		DebugDrawChainOutlineAndAxes(
-			Output.AnimInstanceProxy,
-			CompTM,
-			CSPose,
-			BC,
-			Cache.ChainBones,
-			Cache.PivotBone,
-			Cache.SmoothedPivotDelta,
-			nullptr,
-			3.2f);
+	if (SocketMap.Num() > 0)
+	{
+		TArray<FAegisSocketBoneRuntimeCache> Remaining;
+		SocketMap.GenerateValueArray(Remaining);
+
+		Remaining.Sort([&RequiredBones](const FAegisSocketBoneRuntimeCache& A, const FAegisSocketBoneRuntimeCache& B)
+			{
+				auto Depth = [&RequiredBones](FCompactPoseBoneIndex Bone)
+					{
+						int32 D = 0;
+						FCompactPoseBoneIndex Cursor = Bone;
+
+						while (Cursor != INDEX_NONE && D < 512)
+						{
+							Cursor = RequiredBones.GetParentBoneIndex(Cursor);
+							++D;
+						}
+
+						return D;
+					};
+
+				return Depth(A.BoneIndex) < Depth(B.BoneIndex);
+			});
+
+		Cache.SocketBones.Append(Remaining);
 	}
 }
 
-// ---------------- Hinge (true hinge + debug + SIGNED per-slot) ----------------
+float FAnimNode_AegisProceduralMotionDriver::HalfLifeAlpha(float DeltaSeconds, float HalfLifeSeconds)
+{
+	if (HalfLifeSeconds <= KINDA_SMALL_NUMBER)
+	{
+		return 1.f;
+	}
 
-void FAnimNode_AegisProceduralMotionDriver::ApplyHingeChain(
+	return 1.f - FMath::Pow(0.5f, DeltaSeconds / HalfLifeSeconds);
+}
+
+float FAnimNode_AegisProceduralMotionDriver::EvalAutomaticPhaseWeight(const FAegisActionPhaseBlendDef& Phase, float Time01)
+{
+	const float T = FMath::Clamp(Time01, 0.f, 1.f);
+	const float Start = FMath::Clamp(Phase.StartTime01, 0.f, 1.f);
+	const float Peak = FMath::Clamp(Phase.PeakTime01, Start, 1.f);
+	const float End = FMath::Clamp(Phase.EndTime01, Peak, 1.f);
+
+	if (T < Start || T > End)
+	{
+		return 0.f;
+	}
+
+	if (End <= Start)
+	{
+		return 1.f;
+	}
+
+	if (T <= Peak)
+	{
+		const float Den = FMath::Max(KINDA_SMALL_NUMBER, Peak - Start);
+		return FMath::Pow(FMath::Clamp((T - Start) / Den, 0.f, 1.f), Phase.EaseInExponent);
+	}
+
+	const float Den = FMath::Max(KINDA_SMALL_NUMBER, End - Peak);
+	return FMath::Pow(FMath::Clamp((End - T) / Den, 0.f, 1.f), Phase.EaseOutExponent);
+}
+
+double FAnimNode_AegisProceduralMotionDriver::StepSpringDamperFloat(
+	double Current,
+	double Target,
+	double& Velocity,
+	double DeltaSeconds,
+	const FAegisPerBoneMotionProfile& Profile,
+	double MaxSpeed)
+{
+	if (DeltaSeconds <= static_cast<double>(KINDA_SMALL_NUMBER))
+	{
+		return Current;
+	}
+
+	const double Inertia = static_cast<double>(FMath::Clamp(Profile.Inertia, 0.f, 1.f));
+	const double InertialTarget = FMath::Lerp(Current, Target, 1.0 - Inertia);
+
+	const double HalfLifeBlend = static_cast<double>(HalfLifeAlpha(static_cast<float>(DeltaSeconds), Profile.DampingHalfLife));
+	const double DampedTarget = FMath::Lerp(Current, InertialTarget, HalfLifeBlend);
+
+	const double Spring = static_cast<double>(FMath::Max(0.f, Profile.SpringStrength));
+	if (Spring <= static_cast<double>(KINDA_SMALL_NUMBER))
+	{
+		Velocity = 0.0;
+		return DampedTarget;
+	}
+
+	const double CritDamping = 2.0 * FMath::Sqrt(Spring);
+	const double Accel = (DampedTarget - Current) * Spring - Velocity * CritDamping;
+
+	Velocity += Accel * DeltaSeconds;
+
+	if (MaxSpeed > 0.0)
+	{
+		Velocity = FMath::Clamp(Velocity, -MaxSpeed, MaxSpeed);
+	}
+
+	double Result = Current + Velocity * DeltaSeconds;
+
+	const double OvershootPad = FMath::Max(1.0, FMath::Abs(Target - Current));
+	const double MinBound = FMath::Min(Current, Target) - OvershootPad;
+	const double MaxBound = FMath::Max(Current, Target) + OvershootPad;
+	Result = FMath::Clamp(Result, MinBound, MaxBound);
+
+	return Result;
+}
+
+void FAnimNode_AegisProceduralMotionDriver::EvalSocketBoneTargetParentSpace(
+	const FAegisChainDef_Inline& Chain,
+	const FAegisSocketBoneRuntimeCache& SocketBone,
+	float Time01,
+	float ActionAlpha,
+	FRotator& OutRotDeg,
+	FVector& OutTransPS) const
+{
+	const float T = FMath::Clamp(Time01, 0.f, 1.f);
+	const float A = FMath::Clamp(ActionAlpha, 0.f, 1.f);
+
+	float ChainAlpha = 1.f;
+	if (Chain.ChainAlpha01)
+	{
+		ChainAlpha = CurveToUnsigned01(Chain.ChainAlpha01->GetFloatValue(T));
+	}
+	ChainAlpha = FMath::Clamp(ChainAlpha * Chain.ChainAlphaMultiplier, 0.f, 1.f);
+
+	TArray<float> RawWeights;
+	RawWeights.Reserve(Chain.Phases.Num());
+
+	float TotalWeight = 0.f;
+	for (const FAegisActionPhaseBlendDef& Phase : Chain.Phases)
+	{
+		float W = EvalAutomaticPhaseWeight(Phase, T);
+
+		if (Phase.PhaseAlpha01)
+		{
+			W *= CurveToUnsigned01(Phase.PhaseAlpha01->GetFloatValue(T));
+		}
+
+		RawWeights.Add(W);
+		TotalWeight += W;
+	}
+
+	float RotX = 0.f;
+	float RotY = 0.f;
+	float RotZ = 0.f;
+	FVector Trans = FVector::ZeroVector;
+
+	for (int32 PhaseIndex = 0; PhaseIndex < Chain.Phases.Num(); ++PhaseIndex)
+	{
+		const float PhaseWeight = RawWeights.IsValidIndex(PhaseIndex) ? RawWeights[PhaseIndex] : 0.f;
+		if (PhaseWeight <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		const float NormalizedWeight = (TotalWeight > KINDA_SMALL_NUMBER) ? (PhaseWeight / TotalWeight) : 0.f;
+		const FAegisActionPhaseBlendDef& Phase = Chain.Phases[PhaseIndex];
+
+		const FAegisSocketBonePhaseCurves* FoundSlot = nullptr;
+		for (const FAegisSocketBonePhaseCurves& Slot : Phase.BoneCurves)
+		{
+			if (Slot.BoneName == SocketBone.BoneName)
+			{
+				FoundSlot = &Slot;
+				break;
+			}
+		}
+
+		if (!FoundSlot)
+		{
+			continue;
+		}
+
+		float SlotAlpha = 1.f;
+		if (FoundSlot->Alpha01)
+		{
+			SlotAlpha = CurveToUnsigned01(FoundSlot->Alpha01->GetFloatValue(T));
+		}
+
+		const float W = NormalizedWeight * ChainAlpha * A * SocketBone.BoneWeight * SlotAlpha;
+		if (W <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		const float RotMul = FoundSlot->RotationMultiplier;
+		const float PosMul = FoundSlot->TranslationMultiplier;
+
+		RotX += (FoundSlot->RotX01 ? CurveToSignedSmart(FoundSlot->RotX01->GetFloatValue(T)) : 0.f) * SocketBone.MaxRotationDegrees.X * RotMul * W;
+		RotY += (FoundSlot->RotY01 ? CurveToSignedSmart(FoundSlot->RotY01->GetFloatValue(T)) : 0.f) * SocketBone.MaxRotationDegrees.Y * RotMul * W;
+		RotZ += (FoundSlot->RotZ01 ? CurveToSignedSmart(FoundSlot->RotZ01->GetFloatValue(T)) : 0.f) * SocketBone.MaxRotationDegrees.Z * RotMul * W;
+
+		Trans.X += (FoundSlot->PosX01 ? CurveToSignedSmart(FoundSlot->PosX01->GetFloatValue(T)) : 0.f) * SocketBone.MaxTranslationCm.X * PosMul * W;
+		Trans.Y += (FoundSlot->PosY01 ? CurveToSignedSmart(FoundSlot->PosY01->GetFloatValue(T)) : 0.f) * SocketBone.MaxTranslationCm.Y * PosMul * W;
+		Trans.Z += (FoundSlot->PosZ01 ? CurveToSignedSmart(FoundSlot->PosZ01->GetFloatValue(T)) : 0.f) * SocketBone.MaxTranslationCm.Z * PosMul * W;
+	}
+
+	OutRotDeg = FRotator(RotY, RotZ, RotX);
+	OutTransPS = Trans;
+}
+
+void FAnimNode_AegisProceduralMotionDriver::ApplySocketBoneChain(
 	FComponentSpacePoseContext& Output,
 	TArray<FBoneTransform>& OutBoneTransforms,
 	const FAegisChainDef_Inline& Chain,
@@ -593,148 +682,176 @@ void FAnimNode_AegisProceduralMotionDriver::ApplyHingeChain(
 	float ActionAlpha,
 	float DT)
 {
-	if (Cache.HingeBones.Num() == 0) return;
-
-	const float T = FMath::Clamp(Time01, 0.f, 1.f);
-	const float A = FMath::Clamp(ActionAlpha, 0.f, 1.f);
-
-	const FVector ParentAxisPS = Chain.ParentSpaceAxis.GetSafeNormal();
-	if (ParentAxisPS.IsNearlyZero()) return;
-
-	// 1) Build targets per hinge bone (unsigned or signed per-slot)
-	TArray<float> TargetDeg;
-	TargetDeg.Init(0.f, Cache.HingeBones.Num());
-
-	auto HingeIndexFromName = [&](const FName BoneName) -> int32
-		{
-			if (BoneName.IsNone()) return INDEX_NONE;
-			const FBoneContainer& BC = Output.Pose.GetPose().GetBoneContainer();
-			const int32 PoseIndex = BC.GetPoseBoneIndexForBoneName(BoneName);
-			FCompactPoseBoneIndex CIdx(INDEX_NONE);
-			if (!PoseIndexToCompact(BC, PoseIndex, CIdx)) return INDEX_NONE;
-			return Cache.HingeBones.IndexOfByKey(CIdx);
-		};
-
-	for (const FAegisAutoHingePhase& Phase : Chain.HingePhases)
+	if (Cache.SocketBones.Num() == 0)
 	{
-		float Window = 1.f;
-		if (Phase.Window01) Window = Phase.Window01->GetFloatValue(T);
-		if (Window < Phase.ActiveThreshold) continue;
-
-		const float PhaseAlpha = Window;
-
-		for (const FAegisHingeCurveSlot& Slot : Phase.Hinges)
-		{
-			const int32 Idx = HingeIndexFromName(Slot.HingeBone);
-			if (Idx == INDEX_NONE) continue;
-
-			const float V = EvalHingeCurveSlot(Slot, T); // <-- signed or unsigned
-			TargetDeg[Idx] += V * Chain.MaxDegreesScale * PhaseAlpha;
-		}
+		return;
 	}
 
-	for (int32 i = 0; i < TargetDeg.Num(); ++i)
-	{
-		TargetDeg[i] *= A;
-
-		if (Chain.bClampDegrees)
-		{
-			TargetDeg[i] = FMath::Clamp(TargetDeg[i], Chain.MinDegrees, Chain.MaxDegreesClamp);
-		}
-	}
-
-	// 2) Smooth per hinge bone
-	const float S = HalfLifeAlpha(DT, Chain.SmoothingHalfLife);
-	for (int32 i = 0; i < Cache.SmoothedHingeAnglesDeg.Num(); ++i)
-	{
-		Cache.SmoothedHingeAnglesDeg[i] = FMath::Lerp(Cache.SmoothedHingeAnglesDeg[i], TargetDeg[i], S);
-	}
-
-	// 3) Apply hinges parent->child as true hinge:
-	//    modify LOCAL rotation, rebuild CS = Local * ParentCS, update pose for child propagation.
 	const FBoneContainer& BC = Output.Pose.GetPose().GetBoneContainer();
+	const FColor ConeColor(0, 255, 255, 255);
 
-	// Apply in parent->child order by depth
-	TArray<int32> Indices;
-	Indices.Reserve(Cache.HingeBones.Num());
-	for (int32 i = 0; i < Cache.HingeBones.Num(); ++i) Indices.Add(i);
-
-	auto Depth = [&](FCompactPoseBoneIndex Bone) -> int32
-		{
-			int32 D = 0;
-			FCompactPoseBoneIndex Cur = Bone;
-			while (Cur != INDEX_NONE && D < 512)
-			{
-				Cur = BC.GetParentBoneIndex(Cur);
-				++D;
-			}
-			return D;
-		};
-
-	Indices.Sort([&](int32 AIdx, int32 BIdx)
-		{
-			return Depth(Cache.HingeBones[AIdx]) < Depth(Cache.HingeBones[BIdx]);
-		});
-
-	for (int32 ListI : Indices)
+	for (FAegisSocketBoneRuntimeCache& SocketBone : Cache.SocketBones)
 	{
-		const FCompactPoseBoneIndex BoneIdx = Cache.HingeBones[ListI];
-		const FCompactPoseBoneIndex ParentIdx = BC.GetParentBoneIndex(BoneIdx);
-		if (ParentIdx == INDEX_NONE) continue;
+		if (SocketBone.BoneIndex == INDEX_NONE)
+		{
+			continue;
+		}
 
-		const float Deg = Cache.SmoothedHingeAnglesDeg[ListI];
-		if (FMath::IsNearlyZero(Deg, 0.0001f)) continue;
+		const FCompactPoseBoneIndex ParentIdx = BC.GetParentBoneIndex(SocketBone.BoneIndex);
+		if (ParentIdx == INDEX_NONE)
+		{
+			continue;
+		}
+
+		FRotator TargetRotDeg = FRotator::ZeroRotator;
+		FVector TargetTransPS = FVector::ZeroVector;
+		EvalSocketBoneTargetParentSpace(Chain, SocketBone, Time01, ActionAlpha, TargetRotDeg, TargetTransPS);
+
+		SocketBone.SmoothedRotDeg.Roll =
+			StepSpringDamperFloat(
+				static_cast<double>(SocketBone.SmoothedRotDeg.Roll),
+				static_cast<double>(TargetRotDeg.Roll),
+				SocketBone.RotVelocityDeg.Roll,
+				static_cast<double>(DT),
+				SocketBone.MotionProfile,
+				static_cast<double>(SocketBone.MotionProfile.MaxRotationSpeedDegPerSec));
+
+		SocketBone.SmoothedRotDeg.Pitch =
+			StepSpringDamperFloat(
+				static_cast<double>(SocketBone.SmoothedRotDeg.Pitch),
+				static_cast<double>(TargetRotDeg.Pitch),
+				SocketBone.RotVelocityDeg.Pitch,
+				static_cast<double>(DT),
+				SocketBone.MotionProfile,
+				static_cast<double>(SocketBone.MotionProfile.MaxRotationSpeedDegPerSec));
+
+		SocketBone.SmoothedRotDeg.Yaw =
+			StepSpringDamperFloat(
+				static_cast<double>(SocketBone.SmoothedRotDeg.Yaw),
+				static_cast<double>(TargetRotDeg.Yaw),
+				SocketBone.RotVelocityDeg.Yaw,
+				static_cast<double>(DT),
+				SocketBone.MotionProfile,
+				static_cast<double>(SocketBone.MotionProfile.MaxRotationSpeedDegPerSec));
+
+		SocketBone.SmoothedTransPS.X =
+			StepSpringDamperFloat(
+				static_cast<double>(SocketBone.SmoothedTransPS.X),
+				static_cast<double>(TargetTransPS.X),
+				SocketBone.TransVelocityPS.X,
+				static_cast<double>(DT),
+				SocketBone.MotionProfile,
+				static_cast<double>(SocketBone.MotionProfile.MaxTranslationSpeedCmPerSec));
+
+		SocketBone.SmoothedTransPS.Y =
+			StepSpringDamperFloat(
+				static_cast<double>(SocketBone.SmoothedTransPS.Y),
+				static_cast<double>(TargetTransPS.Y),
+				SocketBone.TransVelocityPS.Y,
+				static_cast<double>(DT),
+				SocketBone.MotionProfile,
+				static_cast<double>(SocketBone.MotionProfile.MaxTranslationSpeedCmPerSec));
+
+		SocketBone.SmoothedTransPS.Z =
+			StepSpringDamperFloat(
+				static_cast<double>(SocketBone.SmoothedTransPS.Z),
+				static_cast<double>(TargetTransPS.Z),
+				SocketBone.TransVelocityPS.Z,
+				static_cast<double>(DT),
+				SocketBone.MotionProfile,
+				static_cast<double>(SocketBone.MotionProfile.MaxTranslationSpeedCmPerSec));
+
+		FTransform BoneLS =
+			(ActionAlpha > KINDA_SMALL_NUMBER && bHasCapturedStartPose)
+			? SocketBone.CapturedLocalTransform
+			: Output.Pose.GetLocalSpaceTransform(SocketBone.BoneIndex);
+
+		auto ApplyAxisRot = [&BoneLS](const FVector& AxisLS, double Deg)
+			{
+				if (FMath::IsNearlyZero(Deg, 0.0001))
+				{
+					return;
+				}
+
+				const FVector SafeAxisLS = AxisLS.GetSafeNormal();
+				if (SafeAxisLS.IsNearlyZero())
+				{
+					return;
+				}
+
+				const FQuat DeltaQuat(SafeAxisLS, FMath::DegreesToRadians(Deg));
+				BoneLS.SetRotation((DeltaQuat * BoneLS.GetRotation()).GetNormalized());
+			};
+
+		ApplyAxisRot(FVector(1.0, 0.0, 0.0), SocketBone.SmoothedRotDeg.Roll);
+		ApplyAxisRot(FVector(0.0, 1.0, 0.0), SocketBone.SmoothedRotDeg.Pitch);
+		ApplyAxisRot(FVector(0.0, 0.0, 1.0), SocketBone.SmoothedRotDeg.Yaw);
+
+		BoneLS.AddToTranslation(SocketBone.SmoothedTransPS);
 
 		const FTransform ParentCS = Output.Pose.GetComponentSpaceTransform(ParentIdx);
-		FTransform BoneLS = Output.Pose.GetLocalSpaceTransform(BoneIdx);
-
-		// Axis authored in parent space -> component space using parent rotation
-		const FVector AxisCS = ParentCS.GetRotation().RotateVector(ParentAxisPS).GetSafeNormal();
-
-		// Convert axis into bone local space (apply local hinge)
-		const FVector AxisPS = ParentCS.GetRotation().Inverse().RotateVector(AxisCS);
-		const FVector AxisLS = BoneLS.GetRotation().Inverse().RotateVector(AxisPS).GetSafeNormal();
-
-		const FQuat DeltaLocal(AxisLS, FMath::DegreesToRadians(Deg));
-		BoneLS.SetRotation((DeltaLocal * BoneLS.GetRotation()).GetNormalized());
-
 		const FTransform BoneCS = BoneLS * ParentCS;
 
-		Output.Pose.SetComponentSpaceTransform(BoneIdx, BoneCS);
-		OutBoneTransforms.Add(FBoneTransform(BoneIdx, BoneCS));
+		Output.Pose.SetComponentSpaceTransform(SocketBone.BoneIndex, BoneCS);
+		OutBoneTransforms.Add(FBoneTransform(SocketBone.BoneIndex, BoneCS));
 	}
 
-	// Debug hinge chain overlay + per-joint angles
 	if (ShouldDrawDebug(*this) && Output.AnimInstanceProxy)
 	{
-		const FTransform& CompTM = Output.AnimInstanceProxy->GetComponentTransform();
-		FCSPose<FCompactPose>& CSPose = Output.Pose;
+		USkeletalMeshComponent* SkelComp = Output.AnimInstanceProxy->GetSkelMeshComponent();
+		if (SkelComp)
+		{
+			const FTransform ComponentTM = Output.AnimInstanceProxy->GetComponentTransform();
 
-		const TArray<FCompactPoseBoneIndex>& Outline = (Cache.ChainBones.Num() > 0) ? Cache.ChainBones : Cache.HingeBones;
-		const FCompactPoseBoneIndex LabelBone = (Outline.Num() > 0) ? Outline[0] : FCompactPoseBoneIndex(INDEX_NONE);
+			for (const FAegisSocketBoneRuntimeCache& SocketBone : Cache.SocketBones)
+			{
+				if (SocketBone.BoneIndex == INDEX_NONE)
+				{
+					continue;
+				}
 
-		const FString Extra = TEXT("Hinge Chain (signed per-slot)\n(angles shown per joint)");
-		DebugDrawChainOutlineAndAxes(
-			Output.AnimInstanceProxy,
-			CompTM,
-			CSPose,
-			BC,
-			Outline,
-			LabelBone,
-			FRotator::ZeroRotator,
-			&Extra,
-			3.0f);
+				const FTransform BoneCS = Output.Pose.GetComponentSpaceTransform(SocketBone.BoneIndex);
+				const FVector WorldPos = ComponentTM.TransformPosition(BoneCS.GetLocation());
+				const FVector X = ComponentTM.TransformVector(BoneCS.GetUnitAxis(EAxis::X));
+				const FVector Y = ComponentTM.TransformVector(BoneCS.GetUnitAxis(EAxis::Y));
+				const FVector Z = ComponentTM.TransformVector(BoneCS.GetUnitAxis(EAxis::Z));
 
-		DebugDrawHingeAngles(
-			Output.AnimInstanceProxy,
-			CompTM,
-			CSPose,
-			Cache.HingeBones,
-			Cache.SmoothedHingeAnglesDeg);
+				AnimDrawDebugLineSafe(Output.AnimInstanceProxy, WorldPos, WorldPos + X * 10.f, FColor::Red, 1.2f);
+				AnimDrawDebugLineSafe(Output.AnimInstanceProxy, WorldPos, WorldPos + Y * 10.f, FColor::Green, 1.2f);
+				AnimDrawDebugLineSafe(Output.AnimInstanceProxy, WorldPos, WorldPos + Z * 10.f, FColor::Blue, 1.2f);
+
+				if (Chain.bDrawDebugCones)
+				{
+					const float ConeAngle =
+						FMath::Max3(
+							SocketBone.MaxRotationDegrees.X,
+							SocketBone.MaxRotationDegrees.Y,
+							SocketBone.MaxRotationDegrees.Z);
+
+					DrawDebugConeApprox(Output.AnimInstanceProxy, WorldPos, X, 14.f, ConeAngle, ConeColor);
+				}
+
+				if (bDebugDrawJointNumbers)
+				{
+					if (UWorld* World = SkelComp->GetWorld())
+					{
+						const FString Text = FString::Printf(
+							TEXT("%s\nRot %.1f %.1f %.1f\nPos %.1f %.1f %.1f"),
+							*SocketBone.BoneName.ToString(),
+							static_cast<double>(SocketBone.SmoothedRotDeg.Roll),
+							static_cast<double>(SocketBone.SmoothedRotDeg.Pitch),
+							static_cast<double>(SocketBone.SmoothedRotDeg.Yaw),
+							static_cast<double>(SocketBone.SmoothedTransPS.X),
+							static_cast<double>(SocketBone.SmoothedTransPS.Y),
+							static_cast<double>(SocketBone.SmoothedTransPS.Z));
+
+						EnqueueDebugString(World, WorldPos + FVector(0.f, 0.f, 12.f), Text, FColor::Yellow);
+					}
+				}
+			}
+		}
 	}
 }
-
-// ---------------- Evaluate ----------------
 
 void FAnimNode_AegisProceduralMotionDriver::EvaluateSkeletalControl_AnyThread(
 	FComponentSpacePoseContext& Output,
@@ -743,7 +860,8 @@ void FAnimNode_AegisProceduralMotionDriver::EvaluateSkeletalControl_AnyThread(
 	OutBoneTransforms.Reset();
 
 	const UAegisProceduralActionAsset* Asset = nullptr;
-	float Time01 = 0.f, ActionAlpha = 0.f;
+	float Time01 = 0.f;
+	float ActionAlpha = 0.f;
 	ResolveActionState(Asset, Time01, ActionAlpha);
 
 	if (!Asset || Asset->Chains.Num() == 0)
@@ -754,34 +872,71 @@ void FAnimNode_AegisProceduralMotionDriver::EvaluateSkeletalControl_AnyThread(
 	const FBoneContainer& BC = Output.Pose.GetPose().GetBoneContainer();
 	EnsureCachesBuilt(Asset, BC);
 
+	if (ActionComponent)
+	{
+		const uint32 CurrentActionInstanceId = static_cast<uint32>(ActionComponent->GetActionInstanceId());
+		if (CurrentActionInstanceId != LastSeenActionInstanceId)
+		{
+			ResetAllSmoothedStates();
+			LastSeenActionInstanceId = CurrentActionInstanceId;
+		}
+	}
+
+	if (ActionAlpha > KINDA_SMALL_NUMBER && !bHasCapturedStartPose)
+	{
+		CaptureStartPose(Output);
+	}
+	else if (ActionAlpha <= KINDA_SMALL_NUMBER)
+	{
+		bHasCapturedStartPose = false;
+	}
+
 	const float DT = Output.AnimInstanceProxy ? Output.AnimInstanceProxy->GetDeltaSeconds() : (1.f / 60.f);
 
-	for (int32 i = 0; i < Asset->Chains.Num(); ++i)
+	for (int32 ChainIndex = 0; ChainIndex < Asset->Chains.Num(); ++ChainIndex)
 	{
-		if (!ActionChainCaches.IsValidIndex(i)) continue;
+		if (!ActionChainCaches.IsValidIndex(ChainIndex))
+		{
+			continue;
+		}
 
-		const FAegisChainDef_Inline& Chain = Asset->Chains[i];
-		FAegisActionChainRuntimeCache& Cache = ActionChainCaches[i];
+		const FAegisChainDef_Inline& Chain = Asset->Chains[ChainIndex];
+		if (!Chain.bApplyToChain)
+		{
+			continue;
+		}
 
-		if (Cache.ChainBones.Num() == 0)
+		FAegisActionChainRuntimeCache& Cache = ActionChainCaches[ChainIndex];
+		if (Cache.ChainBones.Num() == 0 && Cache.SocketBones.Num() == 0)
 		{
 			BuildCacheForChain(Cache, Chain, BC);
-			if (Cache.ChainBones.Num() == 0) continue;
 		}
 
-		if (Chain.SolverType == EAegisChainSolverType::PivotChain)
-		{
-			const FRotator Target = EvalPivotTargetDeg(Chain, Time01, ActionAlpha);
-			ApplyPivotChain(Output, OutBoneTransforms, Chain, Cache, Target, DT);
-		}
-		else if (Chain.SolverType == EAegisChainSolverType::HingeChainAuto)
-		{
-			ApplyHingeChain(Output, OutBoneTransforms, Chain, Cache, Time01, ActionAlpha, DT);
-		}
+		ApplySocketBoneChain(Output, OutBoneTransforms, Chain, Cache, Time01, ActionAlpha, DT);
 	}
 
 	OutBoneTransforms.Sort([](const FBoneTransform& A, const FBoneTransform& B)
 		{
 			return A.BoneIndex < B.BoneIndex;
 		});
+
+	if (OutBoneTransforms.Num() > 1)
+	{
+		TArray<FBoneTransform> Unique;
+		Unique.Reserve(OutBoneTransforms.Num());
+
+		for (const FBoneTransform& Transform : OutBoneTransforms)
+		{
+			if (Unique.Num() > 0 && Unique.Last().BoneIndex == Transform.BoneIndex)
+			{
+				Unique.Last() = Transform;
+			}
+			else
+			{
+				Unique.Add(Transform);
+			}
+		}
+
+		OutBoneTransforms = MoveTemp(Unique);
+	}
 }

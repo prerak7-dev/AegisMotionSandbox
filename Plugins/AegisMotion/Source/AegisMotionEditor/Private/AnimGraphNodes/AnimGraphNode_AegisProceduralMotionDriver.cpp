@@ -9,7 +9,7 @@ FText UAnimGraphNode_AegisProceduralMotionDriver::GetNodeTitle(ENodeTitleType::T
 
 FText UAnimGraphNode_AegisProceduralMotionDriver::GetTooltipText() const
 {
-    return LOCTEXT("AegisProceduralMotionDriverTooltip", "Unified procedural motion driver (spine/head/hips + optional limb smoothing) driven by a motion model.");
+    return LOCTEXT("AegisProceduralMotionDriverTooltip", "Modular socket-bone procedural motion driver with automatic phase blending, per-bone transform curves, and AAA-style debug visualization.");
 }
 
 FLinearColor UAnimGraphNode_AegisProceduralMotionDriver::GetNodeTitleColor() const

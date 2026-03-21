@@ -2,22 +2,23 @@
 
 #include "Algo/Reverse.h"
 #include "Engine/SkeletalMesh.h"
+#include "AegisMotionModule.h"
 
 #if WITH_EDITOR
 void UAegisProceduralActionAsset::PostLoad()
 {
 	Super::PostLoad();
-
 	AutoFixupPhaseNamesAndDefaults_Internal(false);
-	AutoFixupHingePhaseSlots_Internal(false);
+	AutoPopulateSocketBones_Internal(false);
+	AutoFixupPhaseBoneSlots_Internal(false);
 }
 
 void UAegisProceduralActionAsset::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
-
 	AutoFixupPhaseNamesAndDefaults_Internal(false);
-	AutoFixupHingePhaseSlots_Internal(false);
+	AutoPopulateSocketBones_Internal(false);
+	AutoFixupPhaseBoneSlots_Internal(false);
 }
 #endif
 
@@ -27,9 +28,15 @@ void UAegisProceduralActionAsset::AutoFixup_PhaseNamesAndDefaults()
 	MarkPackageDirty();
 }
 
-void UAegisProceduralActionAsset::AutoFixup_HingePhaseSlots()
+void UAegisProceduralActionAsset::AutoFixup_PopulateSocketBones()
 {
-	AutoFixupHingePhaseSlots_Internal(true);
+	AutoPopulateSocketBones_Internal(true);
+	MarkPackageDirty();
+}
+
+void UAegisProceduralActionAsset::AutoFixup_PhaseBoneSlots()
+{
+	AutoFixupPhaseBoneSlots_Internal(true);
 	MarkPackageDirty();
 }
 
@@ -49,10 +56,14 @@ bool UAegisProceduralActionAsset::BuildRefSkeletonChainInclusive(
 	}
 
 	int32 Cur = EndIdx;
-	while (Cur != INDEX_NONE)
+	int32 Safety = 0;
+	while (Cur != INDEX_NONE && Safety++ < 512)
 	{
 		OutSkelPath.Add(Cur);
-		if (Cur == StartIdx) break;
+		if (Cur == StartIdx)
+		{
+			break;
+		}
 		Cur = RefSkel.GetParentIndex(Cur);
 	}
 
@@ -66,188 +77,207 @@ bool UAegisProceduralActionAsset::BuildRefSkeletonChainInclusive(
 	return true;
 }
 
-void UAegisProceduralActionAsset::EnsurePhaseSlotsMatchHinges(
-	FAegisAutoHingePhase& Phase,
-	const TArray<FName>& HingeBonesOrdered)
+void UAegisProceduralActionAsset::NormalizePhaseTimings(FAegisActionPhaseBlendDef& Phase)
+{
+	Phase.StartTime01 = FMath::Clamp(Phase.StartTime01, 0.f, 1.f);
+	Phase.PeakTime01 = FMath::Clamp(Phase.PeakTime01, 0.f, 1.f);
+	Phase.EndTime01 = FMath::Clamp(Phase.EndTime01, 0.f, 1.f);
+
+	if (Phase.PeakTime01 < Phase.StartTime01)
+	{
+		Phase.PeakTime01 = Phase.StartTime01;
+	}
+	if (Phase.EndTime01 < Phase.PeakTime01)
+	{
+		Phase.EndTime01 = Phase.PeakTime01;
+	}
+
+	Phase.EaseInExponent = FMath::Max(0.1f, Phase.EaseInExponent);
+	Phase.EaseOutExponent = FMath::Max(0.1f, Phase.EaseOutExponent);
+}
+
+void UAegisProceduralActionAsset::EnsurePhaseSlotsMatchSocketBones(
+	FAegisActionPhaseBlendDef& Phase,
+	const TArray<FAegisSocketBoneDef>& SocketBonesOrdered)
 {
 	struct FExisting
 	{
-		TObjectPtr<UCurveFloat> Curve = nullptr;
-		bool bSigned = false;
+		TObjectPtr<UCurveFloat> Alpha = nullptr;
+		TObjectPtr<UCurveFloat> RotX = nullptr;
+		TObjectPtr<UCurveFloat> RotY = nullptr;
+		TObjectPtr<UCurveFloat> RotZ = nullptr;
+		TObjectPtr<UCurveFloat> PosX = nullptr;
+		TObjectPtr<UCurveFloat> PosY = nullptr;
+		TObjectPtr<UCurveFloat> PosZ = nullptr;
+		float RotMul = 1.0f;
+		float PosMul = 1.0f;
 	};
 
 	TMap<FName, FExisting> Existing;
-	for (const FAegisHingeCurveSlot& Slot : Phase.Hinges)
+	for (const FAegisSocketBonePhaseCurves& Slot : Phase.BoneCurves)
 	{
-		if (!Slot.HingeBone.IsNone())
+		if (!Slot.BoneName.IsNone())
 		{
-			Existing.Add(Slot.HingeBone, { Slot.Angle01, Slot.bSignedAngle });
+			FExisting E;
+			E.Alpha = Slot.Alpha01;
+			E.RotX = Slot.RotX01;
+			E.RotY = Slot.RotY01;
+			E.RotZ = Slot.RotZ01;
+			E.PosX = Slot.PosX01;
+			E.PosY = Slot.PosY01;
+			E.PosZ = Slot.PosZ01;
+			E.RotMul = Slot.RotationMultiplier;
+			E.PosMul = Slot.TranslationMultiplier;
+			Existing.Add(Slot.BoneName, E);
 		}
 	}
 
-	Phase.Hinges.Reset();
-	Phase.Hinges.Reserve(HingeBonesOrdered.Num());
-
-	for (const FName Bone : HingeBonesOrdered)
+	Phase.BoneCurves.Reset();
+	Phase.BoneCurves.Reserve(SocketBonesOrdered.Num());
+	for (const FAegisSocketBoneDef& SocketBone : SocketBonesOrdered)
 	{
-		FAegisHingeCurveSlot NewSlot;
-		NewSlot.HingeBone = Bone;
-
-		if (const FExisting* E = Existing.Find(Bone))
+		FAegisSocketBonePhaseCurves Slot;
+		Slot.BoneName = SocketBone.BoneName;
+		if (const FExisting* E = Existing.Find(SocketBone.BoneName))
 		{
-			NewSlot.Angle01 = E->Curve;
-			NewSlot.bSignedAngle = E->bSigned;
+			Slot.Alpha01 = E->Alpha;
+			Slot.RotX01 = E->RotX;
+			Slot.RotY01 = E->RotY;
+			Slot.RotZ01 = E->RotZ;
+			Slot.PosX01 = E->PosX;
+			Slot.PosY01 = E->PosY;
+			Slot.PosZ01 = E->PosZ;
+			Slot.RotationMultiplier = E->RotMul;
+			Slot.TranslationMultiplier = E->PosMul;
 		}
-
-		Phase.Hinges.Add(MoveTemp(NewSlot));
+		Phase.BoneCurves.Add(MoveTemp(Slot));
 	}
 }
 
-void UAegisProceduralActionAsset::EnsurePhaseNamesPivot(FAegisChainDef_Inline& Chain, bool bLog)
+void UAegisProceduralActionAsset::EnsurePhaseNames(FAegisChainDef_Inline& Chain, bool bLog)
 {
-	if (Chain.SolverType != EAegisChainSolverType::PivotChain)
+	if (Chain.Phases.Num() == 0)
 	{
-		return;
-	}
-
-	if (Chain.PivotPhases.Num() == 0)
-	{
-		FAegisPhaseCurvesPRY P;
-		P.PhaseName = FName(TEXT("Pivot_01"));
-		P.ActiveThreshold = 0.01f;
-		Chain.PivotPhases.Add(P);
-
+		FAegisActionPhaseBlendDef Phase;
+		Phase.PhaseName = FName(TEXT("Phase_01"));
+		Phase.StartTime01 = 0.0f;
+		Phase.PeakTime01 = 0.5f;
+		Phase.EndTime01 = 1.0f;
+		Chain.Phases.Add(Phase);
 		if (bLog)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[AegisActionAsset] Added default PivotPhases on chain '%s'"), *Chain.ChainName.ToString());
+			UE_LOG(LogAegisMotion, Warning, TEXT("[AegisActionAsset] Added default phase on chain '%s'"), *Chain.ChainName.ToString());
 		}
 	}
 
 	TSet<FName> Used;
-	for (int32 i = 0; i < Chain.PivotPhases.Num(); ++i)
+	for (int32 i = 0; i < Chain.Phases.Num(); ++i)
 	{
-		FAegisPhaseCurvesPRY& Phase = Chain.PivotPhases[i];
-
+		FAegisActionPhaseBlendDef& Phase = Chain.Phases[i];
 		if (Phase.PhaseName.IsNone())
 		{
-			Phase.PhaseName = FName(*FString::Printf(TEXT("Pivot_%02d"), i + 1));
+			Phase.PhaseName = FName(*FString::Printf(TEXT("Phase_%02d"), i + 1));
 		}
-
 		if (Used.Contains(Phase.PhaseName))
 		{
 			Phase.PhaseName = FName(*FString::Printf(TEXT("%s_%02d"), *Phase.PhaseName.ToString(), i + 1));
 		}
-
 		Used.Add(Phase.PhaseName);
-	}
-}
-
-void UAegisProceduralActionAsset::EnsurePhaseNamesHinge(FAegisChainDef_Inline& Chain, bool bLog)
-{
-	if (Chain.SolverType != EAegisChainSolverType::HingeChainAuto)
-	{
-		return;
-	}
-
-	if (Chain.HingePhases.Num() == 0)
-	{
-		FAegisAutoHingePhase H;
-		H.PhaseName = FName(TEXT("Hinge_01"));
-		H.ActiveThreshold = 0.01f;
-		Chain.HingePhases.Add(H);
-
-		if (bLog)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[AegisActionAsset] Added default HingePhases on chain '%s'"), *Chain.ChainName.ToString());
-		}
-	}
-
-	TSet<FName> Used;
-	for (int32 i = 0; i < Chain.HingePhases.Num(); ++i)
-	{
-		FAegisAutoHingePhase& Phase = Chain.HingePhases[i];
-
-		if (Phase.PhaseName.IsNone())
-		{
-			Phase.PhaseName = FName(*FString::Printf(TEXT("Hinge_%02d"), i + 1));
-		}
-
-		if (Used.Contains(Phase.PhaseName))
-		{
-			Phase.PhaseName = FName(*FString::Printf(TEXT("%s_%02d"), *Phase.PhaseName.ToString(), i + 1));
-		}
-
-		Used.Add(Phase.PhaseName);
+		NormalizePhaseTimings(Phase);
 	}
 }
 
 void UAegisProceduralActionAsset::AutoFixupPhaseNamesAndDefaults_Internal(bool bLog)
 {
-	for (FAegisChainDef_Inline& C : Chains)
+	for (FAegisChainDef_Inline& Chain : Chains)
 	{
-		EnsurePhaseNamesPivot(C, bLog);
-		EnsurePhaseNamesHinge(C, bLog);
+		EnsurePhaseNames(Chain, bLog);
 	}
 }
 
-void UAegisProceduralActionAsset::AutoFixupHingePhaseSlots_Internal(bool bLog)
+void UAegisProceduralActionAsset::AutoPopulateSocketBones_Internal(bool bLog)
 {
 	if (!SkeletalMesh)
 	{
 		if (bLog)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[AegisActionAsset] AutoFixupHingePhaseSlots: SkeletalMesh is null"));
+			UE_LOG(LogAegisMotion, Warning, TEXT("[AegisActionAsset] AutoPopulateSocketBones: SkeletalMesh is null"));
 		}
 		return;
 	}
 
 	const FReferenceSkeleton& RefSkel = SkeletalMesh->GetRefSkeleton();
 
-	for (FAegisChainDef_Inline& C : Chains)
+	for (FAegisChainDef_Inline& Chain : Chains)
 	{
-		if (C.SolverType != EAegisChainSolverType::HingeChainAuto)
-		{
-			continue;
-		}
-
-		if (C.StartBone.IsNone() || C.EndBone.IsNone())
+		if (!Chain.bAutoPopulateSocketBonesFromChain || Chain.StartBone.IsNone() || Chain.EndBone.IsNone())
 		{
 			continue;
 		}
 
 		TArray<int32> SkelPath;
-		if (!BuildRefSkeletonChainInclusive(RefSkel, C.StartBone, C.EndBone, SkelPath))
+		if (!BuildRefSkeletonChainInclusive(RefSkel, Chain.StartBone, Chain.EndBone, SkelPath))
 		{
 			if (bLog)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[AegisActionAsset] Chain '%s' invalid path %s->%s"),
-					*C.ChainName.ToString(),
-					*C.StartBone.ToString(),
-					*C.EndBone.ToString());
+				UE_LOG(LogAegisMotion, Warning, TEXT("[AegisActionAsset] Chain '%s' invalid path %s->%s"),
+					*Chain.ChainName.ToString(), *Chain.StartBone.ToString(), *Chain.EndBone.ToString());
 			}
 			continue;
 		}
 
-		TArray<FName> HingeBonesOrdered;
-
-		const int32 StartSkelIdx = (SkelPath.Num() > 0) ? SkelPath[0] : INDEX_NONE;
-		const int32 StartParent = (StartSkelIdx != INDEX_NONE) ? RefSkel.GetParentIndex(StartSkelIdx) : INDEX_NONE;
-
-		const int32 FirstHingeIndex = (StartParent == INDEX_NONE) ? 1 : 0;
-
-		for (int32 i = FirstHingeIndex; i < SkelPath.Num(); ++i)
+		TMap<FName, FAegisSocketBoneDef> Existing;
+		for (const FAegisSocketBoneDef& Def : Chain.SocketBones)
 		{
-			HingeBonesOrdered.Add(RefSkel.GetBoneName(SkelPath[i]));
+			if (!Def.BoneName.IsNone())
+			{
+				Existing.Add(Def.BoneName, Def);
+			}
 		}
 
-		for (FAegisAutoHingePhase& Phase : C.HingePhases)
+		TArray<FAegisSocketBoneDef> NewSocketBones;
+		NewSocketBones.Reserve(SkelPath.Num());
+		for (int32 SkelIndex : SkelPath)
 		{
-			EnsurePhaseSlotsMatchHinges(Phase, HingeBonesOrdered);
+			const int32 ParentIndex = RefSkel.GetParentIndex(SkelIndex);
+			if (ParentIndex == INDEX_NONE)
+			{
+				continue;
+			}
+
+			const FName BoneName = RefSkel.GetBoneName(SkelIndex);
+			if (const FAegisSocketBoneDef* ExistingDef = Existing.Find(BoneName))
+			{
+				NewSocketBones.Add(*ExistingDef);
+			}
+			else
+			{
+				FAegisSocketBoneDef Def;
+				Def.BoneName = BoneName;
+				NewSocketBones.Add(Def);
+			}
 		}
 
+		Chain.SocketBones = MoveTemp(NewSocketBones);
 		if (bLog)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[AegisActionAsset] Chain '%s' AutoHingeSlots=%d"), *C.ChainName.ToString(), HingeBonesOrdered.Num());
+			UE_LOG(LogAegisMotion, Warning, TEXT("[AegisActionAsset] Chain '%s' AutoPopulateSocketBones=%d"), *Chain.ChainName.ToString(), Chain.SocketBones.Num());
+		}
+	}
+}
+
+void UAegisProceduralActionAsset::AutoFixupPhaseBoneSlots_Internal(bool bLog)
+{
+	for (FAegisChainDef_Inline& Chain : Chains)
+	{
+		EnsurePhaseNames(Chain, false);
+		for (FAegisActionPhaseBlendDef& Phase : Chain.Phases)
+		{
+			EnsurePhaseSlotsMatchSocketBones(Phase, Chain.SocketBones);
+		}
+		if (bLog)
+		{
+			UE_LOG(LogAegisMotion, Warning, TEXT("[AegisActionAsset] Chain '%s' PhaseBoneSlots updated"), *Chain.ChainName.ToString());
 		}
 	}
 }

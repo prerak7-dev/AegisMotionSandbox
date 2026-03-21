@@ -16,8 +16,6 @@ public class AegisMotion : ModuleRules
 
         PrivateDependencyModuleNames.AddRange(new string[]
         {
-            "Slate",
-            "SlateCore",
         });
 
         // Allows AnimInstanceProxy debug draw helpers.

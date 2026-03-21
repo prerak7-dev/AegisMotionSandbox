@@ -24,6 +24,8 @@ public class AegisMotionEditor : ModuleRules
             "Slate",
             "SlateCore",
             "EditorFramework",
+            "PropertyEditor",
+            "ToolMenus",
         });
     }
 }

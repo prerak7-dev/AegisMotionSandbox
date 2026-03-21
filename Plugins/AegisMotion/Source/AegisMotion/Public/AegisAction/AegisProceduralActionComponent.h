@@ -5,6 +5,10 @@
 #include "AegisAction/AegisProceduralActionAsset.h"
 #include "AegisProceduralActionComponent.generated.h"
 
+#if WITH_EDITOR
+struct FPropertyChangedEvent;
+#endif
+
 USTRUCT(BlueprintType)
 struct AEGISMOTION_API FAegisActionRuntimeState
 {
@@ -50,10 +54,34 @@ public:
 	UAegisProceduralActionAsset* GetCurrentActionAsset() const { return State.ActionAsset; }
 
 	UFUNCTION(BlueprintCallable, Category = "Aegis|Action")
-	float GetActionTime01() const { return State.Time01; }
+	float GetActionTime01() const { return GetEffectiveTime01(); }
 
 	UFUNCTION(BlueprintCallable, Category = "Aegis|Action")
 	float GetActionAlpha() const { return State.ActionAlpha; }
+
+	UFUNCTION(BlueprintCallable, Category = "Aegis|Action")
+	bool HasActionAsset() const { return State.ActionAsset != nullptr; }
+
+	UFUNCTION(BlueprintCallable, Category = "Aegis|Action")
+	int32 GetActionInstanceId() const { return ActionInstanceId; }
+
+	// --- Editor Debug Scrubbing ---
+	/** Enables debug scrubbing. When enabled, GetActionTime01() returns the scrubbed time instead of runtime time. */
+	UPROPERTY(EditAnywhere, Category = "Aegis|Debug")
+	bool bDebugScrubEnabled = false;
+
+	/** Scrub time in seconds (0..DurationSeconds). */
+	UPROPERTY(EditAnywhere, Category = "Aegis|Debug", meta = (ClampMin = "0.0"))
+	float DebugScrubTimeSeconds = 0.f;
+
+	/** If true, ticking will not advance the action time while scrubbing (you control it with the slider). */
+	UPROPERTY(EditAnywhere, Category = "Aegis|Debug")
+	bool bFreezeTimeWhenScrubbing = true;
+
+	/** Returns effective time01 used by the anim node (runtime or scrub). */
+	UFUNCTION(BlueprintCallable, Category = "Aegis|Debug")
+	float GetEffectiveTime01() const;
+
 
 	UPROPERTY(BlueprintAssignable, Category = "Aegis|Action")
 	FAegisActionFinishedSig OnActionFinished;
@@ -61,6 +89,11 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	void SetActionTickEnabled(bool bEnabled);
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	void RequestScrubPoseRefresh() const;
+#endif
 
 private:
 	UPROPERTY()
@@ -71,4 +104,7 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Aegis|Action")
 	bool bAutoClearOnFinish = false;
+
+	UPROPERTY()
+	uint32 ActionInstanceId = 0u;
 };

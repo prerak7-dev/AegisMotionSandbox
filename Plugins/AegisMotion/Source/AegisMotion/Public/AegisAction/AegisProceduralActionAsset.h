@@ -1,4 +1,3 @@
-// AegisProceduralActionAsset.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -6,104 +5,123 @@
 #include "Curves/CurveFloat.h"
 #include "AegisProceduralActionAsset.generated.h"
 
-UENUM(BlueprintType)
-enum class EAegisChainSolverType : uint8
-{
-	PivotChain UMETA(DisplayName = "Pivot Chain"),
-	HingeChainAuto UMETA(DisplayName = "Hinge Chain (Auto)")
-};
-
-UENUM(BlueprintType)
-enum class EAegisChainDistributionMode : uint8
-{
-	Uniform UMETA(DisplayName = "Uniform"),
-	RampToEnd UMETA(DisplayName = "Ramp To End"),
-	PivotToEnd UMETA(DisplayName = "Pivot To End")
-};
-
-UENUM(BlueprintType)
-enum class EAegisRotChannels : uint8
-{
-	None = 0 UMETA(Hidden),
-	Pitch = 1 << 0,
-	Yaw = 1 << 1,
-	Roll = 1 << 2,
-	All = Pitch | Yaw | Roll
-};
-ENUM_CLASS_FLAGS(EAegisRotChannels)
+class USkeletalMesh;
 
 USTRUCT(BlueprintType)
-struct FAegisMaxDegreesPRY
+struct FAegisSocketBoneLimit
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Pivot", meta = (ClampMin = "0.0"))
-	float Pitch = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Limits", meta = (ClampMin = "0.0"))
+	FVector MaxRotationDegrees = FVector(25.f, 25.f, 25.f);
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Pivot", meta = (ClampMin = "0.0"))
-	float Yaw = 60.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Pivot", meta = (ClampMin = "0.0"))
-	float Roll = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Limits", meta = (ClampMin = "0.0"))
+	FVector MaxTranslationCm = FVector::ZeroVector;
 };
 
 USTRUCT(BlueprintType)
-struct FAegisPhaseCurvesPRY
+struct FAegisPerBoneMotionProfile
 {
 	GENERATED_BODY()
 
-	// NEW: name for cleaner authoring
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Motion", meta = (ClampMin = "0.0"))
+	float DampingHalfLife = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Motion", meta = (ClampMin = "0.0"))
+	float SpringStrength = 18.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Motion", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float Inertia = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Motion", meta = (ClampMin = "0.0"))
+	float MaxRotationSpeedDegPerSec = 1080.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Motion", meta = (ClampMin = "0.0"))
+	float MaxTranslationSpeedCmPerSec = 200.0f;
+};
+
+USTRUCT(BlueprintType)
+struct FAegisSocketBoneDef
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket")
+	FName BoneName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket", meta = (ClampMin = "0.0"))
+	float BoneWeight = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket")
+	FAegisSocketBoneLimit Limits;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket")
+	FAegisPerBoneMotionProfile MotionProfile;
+};
+
+USTRUCT(BlueprintType)
+struct FAegisSocketBonePhaseCurves
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aegis Socket")
+	FName BoneName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Alpha")
+	TObjectPtr<UCurveFloat> Alpha01 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Rotation")
+	TObjectPtr<UCurveFloat> RotX01 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Rotation")
+	TObjectPtr<UCurveFloat> RotY01 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Rotation")
+	TObjectPtr<UCurveFloat> RotZ01 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Translation")
+	TObjectPtr<UCurveFloat> PosX01 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Translation")
+	TObjectPtr<UCurveFloat> PosY01 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Translation")
+	TObjectPtr<UCurveFloat> PosZ01 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Multipliers")
+	float RotationMultiplier = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Socket|Multipliers")
+	float TranslationMultiplier = 1.0f;
+};
+
+USTRUCT(BlueprintType)
+struct FAegisActionPhaseBlendDef
+{
+	GENERATED_BODY()
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase")
 	FName PhaseName;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase")
-	TObjectPtr<UCurveFloat> Window01 = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float StartTime01 = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ActiveThreshold = 0.01f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase")
-	TObjectPtr<UCurveFloat> Pitch01 = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase")
-	TObjectPtr<UCurveFloat> Yaw01 = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase")
-	TObjectPtr<UCurveFloat> Roll01 = nullptr;
-};
-
-USTRUCT(BlueprintType)
-struct FAegisHingeCurveSlot
-{
-	GENERATED_BODY()
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aegis Hinge")
-	FName HingeBone;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Hinge")
-	TObjectPtr<UCurveFloat> Angle01 = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Hinge")
-	bool bSignedAngle = false;
-};
-
-USTRUCT(BlueprintType)
-struct FAegisAutoHingePhase
-{
-	GENERATED_BODY()
-
-	// NEW: name for cleaner authoring
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase")
-	FName PhaseName;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase")
-	TObjectPtr<UCurveFloat> Window01 = nullptr;
+	float PeakTime01 = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ActiveThreshold = 0.01f;
+	float EndTime01 = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase", meta = (ClampMin = "0.1"))
+	float EaseInExponent = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase", meta = (ClampMin = "0.1"))
+	float EaseOutExponent = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase|Alpha")
+	TObjectPtr<UCurveFloat> PhaseAlpha01 = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Phase")
-	TArray<FAegisHingeCurveSlot> Hinges;
+	TArray<FAegisSocketBonePhaseCurves> BoneCurves;
 };
 
 USTRUCT(BlueprintType)
@@ -115,7 +133,7 @@ struct FAegisChainDef_Inline
 	FName ChainName;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain")
-	EAegisChainSolverType SolverType = EAegisChainSolverType::PivotChain;
+	bool bApplyToChain = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain")
 	FName StartBone;
@@ -123,43 +141,29 @@ struct FAegisChainDef_Inline
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain")
 	FName EndBone;
 
-	// Pivot
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Pivot")
-	EAegisChainDistributionMode DistributionMode = EAegisChainDistributionMode::RampToEnd;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain")
+	bool bAutoPopulateSocketBonesFromChain = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Pivot")
-	FName PivotBone;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain")
+	TArray<FAegisSocketBoneDef> SocketBones;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Pivot")
-	FAegisMaxDegreesPRY MaxDegreesPRY;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain|Alpha")
+	TObjectPtr<UCurveFloat> ChainAlpha01 = nullptr;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Pivot", meta = (Bitmask, BitmaskEnum = "/Script/AegisMotion.EAegisRotChannels"))
-	int32 DrivenChannels = int32(EAegisRotChannels::All);
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain|Alpha")
+	float ChainAlphaMultiplier = 1.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Pivot")
-	TArray<FAegisPhaseCurvesPRY> PivotPhases;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain|Smoothing", meta = (ClampMin = "0.0"))
+	float SmoothingHalfLife = 0.10f;
 
-	// Hinge Auto
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Hinge Auto", meta = (EditCondition = "SolverType==EAegisChainSolverType::HingeChainAuto"))
-	FVector ParentSpaceAxis = FVector(1, 0, 0);
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain|Debug")
+	bool bDrawDebugCones = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Hinge Auto", meta = (EditCondition = "SolverType==EAegisChainSolverType::HingeChainAuto", ClampMin = "0.0"))
-	float MaxDegreesScale = 60.f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain|Debug")
+	bool bDrawGhostPose = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Hinge Auto", meta = (EditCondition = "SolverType==EAegisChainSolverType::HingeChainAuto"))
-	bool bClampDegrees = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Hinge Auto", meta = (EditCondition = "bClampDegrees && SolverType==EAegisChainSolverType::HingeChainAuto"))
-	float MinDegrees = -60.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Hinge Auto", meta = (EditCondition = "bClampDegrees && SolverType==EAegisChainSolverType::HingeChainAuto"))
-	float MaxDegreesClamp = 60.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Hinge Auto", meta = (EditCondition = "SolverType==EAegisChainSolverType::HingeChainAuto"))
-	TArray<FAegisAutoHingePhase> HingePhases;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain", meta = (ClampMin = "0.0"))
-	float SmoothingHalfLife = 0.12f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aegis Chain")
+	TArray<FAegisActionPhaseBlendDef> Phases;
 };
 
 UCLASS(BlueprintType)
@@ -182,16 +186,19 @@ public:
 	virtual void PostLoad() override;
 #endif
 
-	// Buttons
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Aegis Action", meta = (DisplayName = "Auto Fixup: Phase Names + Defaults"))
 	void AutoFixup_PhaseNamesAndDefaults();
 
-	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Aegis Action", meta = (DisplayName = "Auto Fixup: Hinge Phase Slots"))
-	void AutoFixup_HingePhaseSlots();
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Aegis Action", meta = (DisplayName = "Auto Fixup: Populate Socket Bones"))
+	void AutoFixup_PopulateSocketBones();
+
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Aegis Action", meta = (DisplayName = "Auto Fixup: Phase Bone Slots"))
+	void AutoFixup_PhaseBoneSlots();
 
 private:
 	void AutoFixupPhaseNamesAndDefaults_Internal(bool bLog);
-	void AutoFixupHingePhaseSlots_Internal(bool bLog);
+	void AutoPopulateSocketBones_Internal(bool bLog);
+	void AutoFixupPhaseBoneSlots_Internal(bool bLog);
 
 	static bool BuildRefSkeletonChainInclusive(
 		const FReferenceSkeleton& RefSkel,
@@ -199,10 +206,10 @@ private:
 		FName EndBone,
 		TArray<int32>& OutSkelPath);
 
-	static void EnsurePhaseSlotsMatchHinges(
-		FAegisAutoHingePhase& Phase,
-		const TArray<FName>& HingeBonesOrdered);
+	static void EnsurePhaseSlotsMatchSocketBones(
+		FAegisActionPhaseBlendDef& Phase,
+		const TArray<FAegisSocketBoneDef>& SocketBonesOrdered);
 
-	static void EnsurePhaseNamesPivot(FAegisChainDef_Inline& Chain, bool bLog);
-	static void EnsurePhaseNamesHinge(FAegisChainDef_Inline& Chain, bool bLog);
+	static void EnsurePhaseNames(FAegisChainDef_Inline& Chain, bool bLog);
+	static void NormalizePhaseTimings(FAegisActionPhaseBlendDef& Phase);
 };
