@@ -1,1253 +1,977 @@
-# Aegis AAA Animation Pipeline
+# Aegis AAA Animation Pipeline — Start-to-Finish Setup and Usage Guide
 
-Aegis AAA Animation Pipeline is a Java/Spring Boot service pipeline for converting external animation data into validated Aegis overlay JSON that can be imported into the Aegis Motion Unreal Engine plugin.
+This README explains how to set up, run, and operate the Aegis animation pipeline from a clean checkout. It covers both supported workflows:
 
-The pipeline is designed as a professional backend-style animation-processing system: source animation files are uploaded as jobs, normalized through asynchronous services, cached and tracked through Redis, processed through Kafka-backed stages, validated against a stable JSON contract, and exported as Unreal-friendly procedural animation data.
+1. **V48 AI Quaternion No-Retarget Generation** — the recommended production path for high-quality Aegis soccer-kick overlay JSON generation.
+2. **Legacy / Traditional BVH Conversion** — the experimental/research path for BVH/Bandai-style source motion conversion.
 
-This README documents the tools, architecture, workflow, local setup, and the full start-to-finish process for creating an overlay JSON file.
+The current production recommendation is **V48 AI Quaternion No-Retarget**. It avoids Unreal IK Retargeter, avoids editing retarget poses, and generates Manny/Quinn-native quaternion overlay JSONs directly for the Aegis custom data asset.
 
 ---
 
-## 1. What this pipeline does
+## 1. What this project does
 
-The pipeline converts animation source data into a structured JSON overlay that the Unreal plugin can import into an `Aegis Procedural Action Asset`.
+The pipeline generates animation overlay JSON files for the AegisMotion Unreal plugin. The final JSON is imported into the Aegis custom data asset and played by the plugin as a live-base overlay over the character's current AnimGraph pose.
+
+For V48, the target format is:
 
 ```text
-BVH / FBX / JSON animation source
-        |
-        v
-Ingestion Service
-        |
-        v
-Kafka job event
-        |
-        v
-Processing Service
-        |
-        v
-Skeleton mapping + transform normalization + curve generation
-        |
-        v
-Redis job state + generated artifact metadata
-        |
-        v
-Validated Aegis Overlay JSON
-        |
-        v
-Unreal Editor importer
-        |
-        v
-Aegis Procedural Action Asset
+LiveBaseGeneratedOverlay
+UseLiveAnimGraphSourcePoseEveryFrame
+UE5 Manny/Quinn skeleton profile
+Quaternion rotation curves: rot_qx / rot_qy / rot_qz / rot_qw
+Phase metadata for plant, pelvis-open, thigh-drive, knee-snap, ankle-whip, follow-through, counterbalance, and head focus
 ```
 
-The output JSON is not an FBX and not a baked Unreal animation sequence. It is a procedural overlay data file containing curves, bindings, duration, metadata, and skeleton mapping information. The Aegis Unreal plugin imports that JSON into editable curves that can drive procedural motion in the custom animation driver.
-
----
-
-## 2. Core goals
-
-- Convert external mocap or authored animation data into Aegis-compatible overlay JSON.
-- Keep animation processing repeatable, inspectable, and deterministic.
-- Separate heavy data processing from Unreal Editor runtime logic.
-- Use backend engineering patterns relevant to online services: job orchestration, asynchronous processing, caching, validation, and observability.
-- Produce clean JSON artifacts that can be versioned, reviewed, and imported by tools.
-- Let designers and technical animators tune the final result in Unreal after import.
-
----
-
-## 3. Tools and technologies
-
-### Backend pipeline
-
-| Area | Tooling |
-|---|---|
-| Language | Java 17+ |
-| Framework | Spring Boot 3.x |
-| Build system | Maven |
-| Messaging | Apache Kafka |
-| Cache / job state | Redis |
-| Serialization | Jackson JSON |
-| Validation | Bean Validation / custom schema validation |
-| Local services | Docker / Docker Compose |
-| Testing | JUnit, Spring Boot Test |
-| API testing | Postman, curl, or PowerShell `Invoke-RestMethod` |
-
-### Animation and game-dev side
-
-| Area | Tooling |
-|---|---|
-| Engine | Unreal Engine 5.x |
-| Runtime plugin | Aegis Motion Unreal plugin |
-| Authoring target | `UAegisProceduralActionAsset` |
-| Import target | Aegis overlay JSON importer |
-| Input formats | BVH, normalized JSON, and future FBX/AMC adapters |
-| Output format | Aegis overlay JSON |
-
-### Optional development tools
-
-| Area | Tooling |
-|---|---|
-| Data inspection | Python / Jupyter notebooks |
-| JSON inspection | VS Code, jq |
-| Kafka inspection | Kafka UI, Redpanda Console, or CLI consumers |
-| Redis inspection | RedisInsight or `redis-cli` |
-
----
-
-## 4. Repository structure
-
-Recommended structure:
+The recommended output file is:
 
 ```text
-aegis-aaa-animation-pipeline/
-│
-├── pom.xml
-├── docker-compose.yml
-├── README.md
-│
-├── common/
-│   ├── pom.xml
-│   └── src/main/java/com/aegis/common/
-│       ├── dto/
-│       ├── events/
-│       ├── model/
-│       ├── schema/
-│       └── validation/
-│
-├── ingestion-service/
-│   ├── pom.xml
-│   └── src/main/java/com/aegis/ingestion/
-│       ├── IngestionServiceApplication.java
-│       ├── controller/
-│       ├── service/
-│       ├── parser/
-│       └── config/
-│
-├── processing-service/
-│   ├── pom.xml
-│   └── src/main/java/com/aegis/processing/
-│       ├── ProcessingServiceApplication.java
-│       ├── consumer/
-│       ├── service/
-│       ├── mapping/
-│       ├── curves/
-│       ├── validation/
-│       └── export/
-│
-├── samples/
-│   ├── bvh/
-│   ├── json/
-│   └── mappings/
-│
-└── output/
-    └── overlays/
+exports/aegis_v48_quaternion_soccer_kick_overlay.json
 ```
 
-### Module responsibilities
-
-#### `common`
-
-Shared code used by all services.
-
-Typical contents:
-
-- Job DTOs.
-- Kafka event contracts.
-- Animation frame models.
-- Skeleton mapping models.
-- Overlay JSON schema models.
-- Validation result objects.
-- Shared constants for Kafka topics and Redis keys.
-
-#### `ingestion-service`
-
-Entry point for animation files.
-
-Responsibilities:
-
-- Accept uploaded animation files.
-- Create a job ID.
-- Store the raw input temporarily.
-- Parse basic file metadata.
-- Publish an animation ingestion event to Kafka.
-- Save job state to Redis.
-
-#### `processing-service`
-
-Main transformation service.
-
-Responsibilities:
-
-- Consume ingestion events from Kafka.
-- Load source animation data.
-- Parse frames, hierarchy, and channels.
-- Apply skeleton mapping.
-- Normalize transforms into Unreal/Aegis conventions.
-- Generate pitch, roll, yaw, and optional translation curves.
-- Validate the generated overlay.
-- Write the final JSON artifact.
-- Update job status in Redis.
-
----
-
-## 5. Runtime architecture
+Its validation report is:
 
 ```text
-Client / CLI / Postman
-        |
-        | POST /api/animation/jobs
-        v
-+---------------------------+
-| ingestion-service         |
-|---------------------------|
-| - accepts file upload     |
-| - creates job id          |
-| - stores raw input        |
-| - writes Redis job state  |
-| - publishes Kafka event   |
-+---------------------------+
-        |
-        | topic: aegis.animation.ingested
-        v
-+---------------------------+
-| Kafka                     |
-|---------------------------|
-| - durable event transport |
-| - decouples services      |
-+---------------------------+
-        |
-        v
-+---------------------------+
-| processing-service        |
-|---------------------------|
-| - consumes job event      |
-| - parses animation        |
-| - maps skeleton joints    |
-| - normalizes transforms   |
-| - generates curves        |
-| - validates overlay JSON  |
-| - writes final artifact   |
-+---------------------------+
-        |
-        v
-+---------------------------+
-| Redis                     |
-|---------------------------|
-| - job status              |
-| - progress                |
-| - errors                  |
-| - artifact path           |
-+---------------------------+
-        |
-        v
-output/overlays/{jobId}.aegis-overlay.json
+exports/aegis_v48_quaternion_soccer_kick_overlay.json.validation.json
 ```
 
----
-
-## 6. Kafka topics
-
-Recommended topics:
-
-| Topic | Producer | Consumer | Purpose |
-|---|---|---|---|
-| `aegis.animation.ingested` | ingestion-service | processing-service | A new source file is ready for processing. |
-| `aegis.animation.processed` | processing-service | optional downstream service | Overlay JSON was generated successfully. |
-| `aegis.animation.failed` | ingestion-service / processing-service | monitoring tools | Job failed and includes failure context. |
-
-Example ingestion event:
+A successful validation should show something close to:
 
 ```json
 {
-  "jobId": "5fb21071-68c6-4469-9075-3995e3d4afad",
-  "sourceFileName": "soccer_kick.bvh",
-  "sourceFormat": "BVH",
-  "inputPath": "storage/raw/5fb21071-68c6-4469-9075-3995e3d4afad/soccer_kick.bvh",
-  "mappingProfile": "ue5_manny_quinn_default",
-  "requestedOutput": "AEGIS_OVERLAY_JSON",
-  "createdAt": "2026-05-07T21:00:00Z"
+  "valid": true,
+  "sourceFormat": "AI_NATIVE_UE5_MANNEQUIN_LIVE_BASE_OVERLAY_V48_QUATERNION_NO_RETARGET",
+  "quatCurveCount": 88,
+  "scalarRuntimeCurveCount": 0,
+  "errors": []
 }
 ```
 
 ---
 
-## 7. Redis job state
+## 2. Architecture overview
 
-Recommended Redis key format:
+### 2.1 High-level service architecture
 
 ```text
-aegis:animation:job:{jobId}
+Dashboard / Browser
+        |
+        v
+Spring Boot Orchestrator API : localhost:8088
+        |
+        | creates jobs, stores job state, publishes pipeline commands
+        v
+Kafka : localhost:9092
+        |
+        v
+Spring Boot Worker Service : localhost:8090
+        |
+        | executes PowerShell + Python pipeline steps
+        v
+Python motion-prior / generation code
+        |
+        v
+Generated Aegis overlay JSON
+        |
+        v
+AegisMotion Unreal Plugin custom data asset import
 ```
 
-Example value:
+### 2.2 Infrastructure
 
-```json
-{
-  "jobId": "5fb21071-68c6-4469-9075-3995e3d4afad",
-  "status": "PROCESSING",
-  "progress": 65,
-  "stage": "GENERATING_CURVES",
-  "sourceFileName": "soccer_kick.bvh",
-  "artifactPath": null,
-  "error": null,
-  "updatedAt": "2026-05-07T21:02:14Z"
-}
+```text
+Redis       localhost:6379   job state, logs, progress, latest export path
+Kafka       localhost:9092   pipeline step commands
+Kafka UI    localhost:8099   optional Kafka inspection UI
+Orchestrator localhost:8088  REST API + dashboard
+Worker      localhost:8090   background step executor
 ```
 
-Recommended statuses:
+### 2.3 Backend modules
 
-| Status | Meaning |
-|---|---|
-| `CREATED` | Job was created but has not been published. |
-| `QUEUED` | Job event was published to Kafka. |
-| `PROCESSING` | Processing service is actively working on the job. |
-| `VALIDATING` | Overlay JSON is being checked before export. |
-| `COMPLETED` | JSON artifact was created successfully. |
-| `FAILED` | Job failed with a known error. |
-| `CANCELLED` | Job was manually cancelled or superseded. |
+```text
+backend/common
+  Shared DTOs, job state, pipeline steps, Kafka command/event models.
+
+backend/orchestrator-service
+  REST API, dashboard HTML, job creation, Redis job state, Kafka command publishing.
+
+backend/worker-service
+  Kafka consumer, PowerShell step execution, progress parsing, timeout protection, export-path reporting.
+```
+
+### 2.4 Important Redis keys
+
+```text
+aegis:v46:job:{jobId}
+aegis:v46:exports:latest
+```
+
+The project still uses the `v46` Redis namespace for job state because the Spring/Kafka/Redis dashboard system was introduced in V46 and retained through V48.
 
 ---
 
-## 8. Aegis overlay JSON contract
+## 3. Requirements
 
-The final artifact should be named like this:
+### 3.1 Required for both V48 AI generation and dashboard usage
+
+Install these first:
 
 ```text
-{actionName}.aegis-overlay.json
+Windows 10/11
+PowerShell 5+ or PowerShell 7+
+Git
+Python 3.10+
+Java JDK 17+
+Maven 3.9+
+Docker Desktop
 ```
+
+Confirm from PowerShell:
+
+```powershell
+git --version
+python --version
+java -version
+mvn -version
+docker --version
+```
+
+### 3.2 Python dependencies
+
+From the pipeline root:
+
+```powershell
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Install PyTorch separately. CPU example:
+
+```powershell
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+If you have a CUDA GPU and want faster training, install the PyTorch build that matches your CUDA version.
+
+### 3.3 Additional requirements for legacy BVH conversion
+
+Only needed for the traditional BVH/Bandai workflows:
+
+```text
+Blender 4.x or newer
+Unreal Engine 5.x
+AegisMotion plugin installed in your Unreal project
+Optional: exported Manny/Quinn skeletal mesh FBX for offline retarget experiments
+```
+
+The legacy Unreal retarget path can use:
+
+```text
+UnrealEditor.exe
+UnrealEditor-Cmd.exe
+IK Rig / IK Retargeter assets
+```
+
+However, if editing retarget poses crashes the GPU, do **not** use the Unreal IK Retargeter path. Use the V48 no-retarget production path instead.
+
+---
+
+## 4. Recommended folder layout
 
 Example:
 
 ```text
-soccer_kick.aegis-overlay.json
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix
+C:\UnrealProjects\AegisMotionSandbox\AegisMotionSandbox.uproject
+C:\UnrealProjects\AegisMotionSandbox\Plugins\AegisMotion
+C:\Mocap\Bandai-Namco-Research-Motiondataset
+C:\Mocap\AegisBandaiFbx
+C:\Mocap\AegisTargets\SKM_Quinn.fbx
 ```
 
-Recommended schema:
+The V48 production path only needs the pipeline folder and the included gold sample.
+
+The legacy BVH path uses the `C:\Mocap` folders if you keep the default config style.
+
+---
+
+## 5. Fresh setup from a clean extracted pipeline
+
+Open PowerShell in the pipeline root:
+
+```powershell
+cd C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix
+```
+
+If PowerShell blocks scripts, use a process-local bypass:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Install Python dependencies:
+
+```powershell
+pip install -r requirements.txt
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+Start Kafka + Redis:
+
+```powershell
+.\scripts\v46-start-infra.ps1
+```
+
+Build the backend:
+
+```powershell
+.\scripts\v46-build-backend.ps1
+```
+
+Start the orchestrator in one PowerShell window:
+
+```powershell
+.\scripts\v46-start-orchestrator.ps1
+```
+
+Start the worker in a second PowerShell window:
+
+```powershell
+.\scripts\v46-start-worker.ps1
+```
+
+Open the dashboard:
+
+```powershell
+.\scripts\v46-open-dashboard.ps1
+```
+
+Or open manually:
+
+```text
+http://localhost:8088/
+```
+
+Keep the orchestrator and worker windows open while jobs are running.
+
+---
+
+## 6. Dashboard usage
+
+The dashboard is available at:
+
+```text
+http://localhost:8088/
+```
+
+It shows:
+
+```text
+all jobs
+selected job details
+current pipeline step
+progress percentage
+latest logs
+options used for the job
+export path
+buttons to delete selected jobs or completed/failed jobs
+```
+
+### 6.1 Start a V48 AI generation job
+
+Use these dashboard values:
+
+```text
+Pipeline mode: V48 Quaternion No-Retarget
+Config path: config/aegis_v48_no_retarget.config.json
+Kick style: Instep Power Shot / Inside-Foot Pass / Side-Foot Shot / Low Driven Kick / Follow-Through Heavy / Short Tap / Volley Preparation
+Dominant leg: right or left
+Overlay duration seconds: 1.35
+Training variant count: 20-50 recommended, 35 default
+Intensity: 0.0-1.5, 1.0 default
+Follow-through: 0.0-1.5, 0.70 default
+Plant stability: 0.0-1.0, 0.92 default
+Upper-body counterbalance: 0.0-1.5, 0.78 default
+Skip neural training: off for full generation, on for fast fallback/smoke test
+```
+
+Click:
+
+```text
+Run V48 job
+```
+
+### 6.2 Expected V48 dashboard steps
+
+```text
+V48_LOAD_GOLD_OVERLAY
+V48_GENERATE_SYNTHETIC_VARIANTS
+V48_BUILD_QUATERNION_DATASET
+V48_TRAIN_QUATERNION_PRIOR
+V48_GENERATE_IMPORT_JSON
+V48_VALIDATE_IMPORT_JSON
+COMPLETE
+```
+
+If `Skip neural training` is checked, the job skips `V48_TRAIN_QUATERNION_PRIOR` and generates from the synthetic variant/retrieval fallback.
+
+### 6.3 Final V48 output
+
+Import this file into the Aegis custom data asset:
+
+```text
+exports/aegis_v48_quaternion_soccer_kick_overlay.json
+```
+
+Review this validation file first:
+
+```text
+exports/aegis_v48_quaternion_soccer_kick_overlay.json.validation.json
+```
+
+The validation should show:
+
+```text
+valid: true
+quatCurveCount: 88 or similar
+scalarRuntimeCurveCount: 0
+errors: []
+```
+
+---
+
+## 7. V48 AI generation pipeline details
+
+V48 is the recommended production path.
+
+### 7.1 Input
+
+The V48 generator starts from the known-good gold reference:
+
+```text
+sample-data/gold/ai_soccer_kick_livebase_overlay_v36.json
+```
+
+That reference already uses the correct runtime contract:
+
+```text
+LiveBaseGeneratedOverlay
+UseLiveAnimGraphSourcePoseEveryFrame
+UE5_Mannequin_Quinn_Manny
+rot_qx / rot_qy / rot_qz / rot_qw quaternion curves
+```
+
+### 7.2 Generation contract
+
+V48 treats the following biomechanical rules as first-class generation parameters:
+
+```text
+plant foot stays grounded
+pelvis opens before thigh drive
+thigh leads before calf extension
+calf/knee snaps through near strike
+foot follows the knee, then whips through
+spine and arms counterbalance
+head stays ball-focused
+```
+
+The intended phase sequence is:
+
+```text
+pelvis opens
+plant side stabilizes
+kicking hip loads
+thigh accelerates
+knee snaps
+ankle whips
+torso counters
+arms balance
+head remains focused
+```
+
+### 7.3 Neural refinement targets
+
+The ML step is used for refinement, not to rescue broken retargeted data. It targets:
+
+```text
+smooth timing
+correct joint coupling
+add realistic follow-through
+predict contact timing
+adjust style/intensity
+remove jitter
+preserve foot plant
+```
+
+### 7.4 V48 manual script sequence
+
+You can run the V48 pipeline manually without the dashboard:
+
+```powershell
+.\scripts\v48-01-load-gold-overlay.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-02-generate-quaternion-variants.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-03-build-quaternion-dataset.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-04-train-quaternion-prior.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-05-generate-import-json.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-06-validate-import-json.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+```
+
+For a quick smoke pass, skip the train script and run generation/validation after dataset build. The generator can use a fallback when no checkpoint exists.
+
+### 7.5 V48 generated folders
+
+```text
+generated/v48/quaternion_variants
+  Synthetic Manny/Quinn-native kick variants.
+
+generated/v48/manifest.v48.quaternion_variants.json
+  Manifest of generated training examples.
+
+generated/v48/tensor_dataset
+  Quaternion/6D tensor dataset.
+
+generated/v48/checkpoints
+  Neural refinement checkpoints.
+
+exports/aegis_v48_quaternion_soccer_kick_overlay.json
+  Final import JSON.
+```
+
+---
+
+## 8. Traditional / legacy BVH conversion pipelines
+
+The legacy path is retained for research and dataset experiments. It is no longer the recommended path for portfolio-quality soccer kicks because retargeting/axis issues can easily produce poor overlays.
+
+There are two legacy variants:
+
+1. **Legacy offline retarget path** — BVH source data is processed outside the Unreal IK Retargeter path and converted toward Manny/Quinn training JSON.
+2. **Legacy Unreal manual retarget path** — BVH is converted to FBX, imported to Unreal, manually retargeted, then exported to training JSON.
+
+Use V48 for production. Use legacy only when you specifically want to test mocap/BVH ingestion.
+
+---
+
+## 9. Legacy path A — Bandai/BVH offline-retarget experiment
+
+This is the safer legacy path because it avoids manual IK Retargeter editing in Unreal.
+
+### 9.1 Configure legacy paths
+
+Create or update the legacy config:
+
+```powershell
+.\scripts\00-create-config.ps1
+```
+
+Edit:
+
+```text
+config/aegis_bandai_v45.config.json
+```
+
+Check these sections:
 
 ```json
 {
-  "schemaVersion": "aegis.overlay.v1",
-  "jobId": "5fb21071-68c6-4469-9075-3995e3d4afad",
-  "actionName": "SoccerKick",
-  "source": {
-    "fileName": "soccer_kick.bvh",
-    "format": "BVH",
-    "frameRate": 60,
-    "frameCount": 96
+  "tools": {
+    "gitExe": "git",
+    "blenderExe": "C:/Program Files/Blender Foundation/Blender 5.1/blender.exe"
   },
-  "durationSeconds": 1.6,
-  "coordinateSystem": {
-    "sourceUpAxis": "Y",
-    "targetUpAxis": "Z",
-    "rotationUnit": "degrees",
-    "translationUnit": "centimeters"
+  "bandai": {
+    "repoDir": "C:/Mocap/Bandai-Namco-Research-Motiondataset",
+    "rawExtractDir": "C:/Mocap/Bandai-Namco-Research-Motiondataset/extracted",
+    "fbxOutputDir": "C:/Mocap/AegisBandaiFbx"
   },
-  "skeleton": {
-    "targetProfile": "UE5_Manny_Quinn",
-    "rootBone": "pelvis"
-  },
-  "bindings": [
-    {
-      "sourceJoint": "Hips",
-      "targetBone": "pelvis",
-      "enabled": true
-    },
-    {
-      "sourceJoint": "RightUpLeg",
-      "targetBone": "thigh_r",
-      "enabled": true
-    }
-  ],
-  "curves": [
-    {
-      "targetBone": "thigh_r",
-      "channels": {
-        "pitch": [
-          { "time": 0.0, "value": 0.0 },
-          { "time": 0.25, "value": -32.0 },
-          { "time": 0.55, "value": 61.0 },
-          { "time": 1.0, "value": 0.0 }
-        ],
-        "roll": [],
-        "yaw": []
-      }
-    }
-  ],
-  "validation": {
-    "hasCurves": true,
-    "curveCount": 1,
-    "warnings": []
-  },
-  "metadata": {
-    "createdBy": "aegis-aaa-animation-pipeline",
-    "notes": "Generated for Aegis Motion Unreal importer."
+  "training": {
+    "manifestPath": "sample-data/manifest.bandai.v47.training.json",
+    "datasetOutput": "datasets/bandai_v47_neural_overlay",
+    "checkpointOutput": "checkpoints/bandai_v47_neural_overlay",
+    "exportOutput": "exports/bandai_soccer_kick_overlay_v47.json",
+    "exportDurationSeconds": 1.35
   }
 }
 ```
 
-### Required fields
-
-| Field | Required | Purpose |
-|---|---:|---|
-| `schemaVersion` | Yes | Allows the Unreal importer to choose the correct parser. |
-| `actionName` | Yes | Human-readable action name used when creating/importing the asset. |
-| `durationSeconds` | Yes | Runtime duration of the generated action. |
-| `bindings` | Yes | Maps source joints to target Unreal bones. |
-| `curves` | Yes | Contains animation data for target bones. |
-| `targetBone` | Yes | Unreal skeleton bone to receive the curve data. |
-| `channels` | Yes | Pitch, roll, yaw, and optional translation channels. |
-
-### Curve time convention
-
-Curve key times should be normalized from `0.0` to `1.0`.
+If using offline retarget scripts, also check:
 
 ```text
-0.0 = start of action
-0.5 = middle of action
-1.0 = end of action
+config/offline_retarget_v46.config.json
 ```
 
-The Unreal plugin can then scale the normalized curve time by the action asset's `DurationSeconds`.
+and set the target Manny/Quinn skeletal mesh FBX path if needed.
 
-### Rotation convention
+### 9.2 Run from dashboard
 
-- Rotation values are stored in degrees.
-- Channels are stored as pitch, roll, and yaw.
-- The processing service should normalize source rotations into the convention expected by the Unreal importer.
-- Sign corrections should be handled in the processing layer or through a mapping profile, not manually edited after every import.
-
----
-
-## 9. Default UE5 Manny/Quinn mapping profile
-
-Recommended default mapping:
-
-```json
-{
-  "profileName": "ue5_manny_quinn_default",
-  "bindings": [
-    { "sourceJoint": "Hips", "targetBone": "pelvis" },
-    { "sourceJoint": "Spine", "targetBone": "spine_01" },
-    { "sourceJoint": "Chest", "targetBone": "spine_02" },
-    { "sourceJoint": "UpperChest", "targetBone": "spine_03" },
-
-    { "sourceJoint": "RightUpLeg", "targetBone": "thigh_r" },
-    { "sourceJoint": "RightLeg", "targetBone": "calf_r" },
-    { "sourceJoint": "RightFoot", "targetBone": "foot_r" },
-
-    { "sourceJoint": "LeftUpLeg", "targetBone": "thigh_l" },
-    { "sourceJoint": "LeftLeg", "targetBone": "calf_l" },
-    { "sourceJoint": "LeftFoot", "targetBone": "foot_l" },
-
-    { "sourceJoint": "RightArm", "targetBone": "upperarm_r" },
-    { "sourceJoint": "RightForeArm", "targetBone": "lowerarm_r" },
-    { "sourceJoint": "RightHand", "targetBone": "hand_r" },
-
-    { "sourceJoint": "LeftArm", "targetBone": "upperarm_l" },
-    { "sourceJoint": "LeftForeArm", "targetBone": "lowerarm_l" },
-    { "sourceJoint": "LeftHand", "targetBone": "hand_l" },
-
-    { "sourceJoint": "Neck", "targetBone": "neck_01" },
-    { "sourceJoint": "Head", "targetBone": "head" }
-  ]
-}
-```
-
-Store this as:
+In the dashboard:
 
 ```text
-samples/mappings/ue5_manny_quinn_default.json
+Pipeline mode: Legacy Bandai Experimental
+Config path: config/aegis_bandai_v45.config.json
+Kick style: active or desired legacy style
+Dominant leg: right or left
+Skip neural training: optional
 ```
 
----
+Click:
 
-## 10. Local setup
-
-### Prerequisites
-
-Install:
-
-- Java 17 or newer.
-- Maven 3.9 or newer.
-- Docker Desktop.
-- Git.
-- Unreal Engine 5.x for the import step.
-
-Verify:
-
-```bash
-java -version
-mvn -version
-docker --version
+```text
+Run V48 job
 ```
 
-On Windows PowerShell:
+The button label still says V48 job in the current dashboard, but choosing `Legacy Bandai Experimental` sends the legacy pipeline mode to the backend.
+
+### 9.3 Expected legacy offline-retarget steps
+
+```text
+CLONE_BANDAI_REPO
+EXTRACT_BANDAI_DATA
+SELECT_BANDAI_CLIPS
+OFFLINE_RETARGET_TO_MANNY_JSON
+BUILD_TRAINING_MANIFEST
+BUILD_TENSOR_DATASET
+TRAIN_NEURAL_MOTION_PRIOR
+GENERATE_OVERLAY_JSON
+VERIFY_OVERLAY_JSON
+COMPLETE
+```
+
+### 9.4 Run legacy offline-retarget through API script
+
+You can also run:
 
 ```powershell
-java -version
-mvn -version
-docker --version
+.\scripts\v47-run-bandai-neural-overlay-api.ps1 -SkipTraining -MaxClips 1
 ```
 
----
-
-## 11. Docker Compose for Kafka and Redis
-
-Example `docker-compose.yml`:
-
-```yaml
-services:
-  redis:
-    image: redis:7
-    container_name: aegis-redis
-    ports:
-      - "6379:6379"
-
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.1
-    container_name: aegis-zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-
-  kafka:
-    image: confluentinc/cp-kafka:7.6.1
-    container_name: aegis-kafka
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-```
-
-Start infrastructure:
-
-```bash
-docker compose up -d
-```
-
-Stop infrastructure:
-
-```bash
-docker compose down
-```
-
----
-
-## 12. Application configuration
-
-Recommended `application.yml` for `ingestion-service`:
-
-```yaml
-server:
-  port: 8081
-
-spring:
-  application:
-    name: ingestion-service
-  kafka:
-    bootstrap-servers: localhost:9092
-  data:
-    redis:
-      host: localhost
-      port: 6379
-
-aegis:
-  storage:
-    raw-input-dir: storage/raw
-  kafka:
-    topics:
-      ingested: aegis.animation.ingested
-      failed: aegis.animation.failed
-```
-
-Recommended `application.yml` for `processing-service`:
-
-```yaml
-server:
-  port: 8082
-
-spring:
-  application:
-    name: processing-service
-  kafka:
-    bootstrap-servers: localhost:9092
-    consumer:
-      group-id: aegis-processing-service
-      auto-offset-reset: earliest
-  data:
-    redis:
-      host: localhost
-      port: 6379
-
-aegis:
-  storage:
-    raw-input-dir: storage/raw
-    overlay-output-dir: output/overlays
-  kafka:
-    topics:
-      ingested: aegis.animation.ingested
-      processed: aegis.animation.processed
-      failed: aegis.animation.failed
-```
-
----
-
-## 13. Build the project
-
-From the repository root:
-
-```bash
-mvn clean install
-```
-
-If a service cannot find the `common` module, build from the root parent project instead of from the individual service folder.
-
-Expected order:
-
-```text
-common -> ingestion-service -> processing-service
-```
-
----
-
-## 14. Run the services
-
-Open two terminals.
-
-Terminal 1:
-
-```bash
-mvn -pl ingestion-service spring-boot:run
-```
-
-Terminal 2:
-
-```bash
-mvn -pl processing-service spring-boot:run
-```
-
-Alternative from inside each module:
-
-```bash
-cd ingestion-service
-mvn spring-boot:run
-```
-
-```bash
-cd processing-service
-mvn spring-boot:run
-```
-
-If Spring Boot cannot find the main class, add this to the module `pom.xml`:
-
-```xml
-<properties>
-    <start-class>com.aegis.ingestion.IngestionServiceApplication</start-class>
-</properties>
-```
-
-For `processing-service`:
-
-```xml
-<properties>
-    <start-class>com.aegis.processing.ProcessingServiceApplication</start-class>
-</properties>
-```
-
----
-
-# 15. Step-by-step: create Aegis overlay JSON from start to finish
-
-This is the canonical workflow for producing a JSON file that can be imported into Unreal.
-
----
-
-## Step 1: Prepare the source animation file
-
-Use a clean source animation file such as:
-
-```text
-samples/bvh/soccer_kick.bvh
-```
-
-Recommended source requirements:
-
-- One clear action per file.
-- No extra idle frames unless they are intentionally part of the action.
-- Consistent frame rate.
-- Known skeleton hierarchy.
-- Source joint names that can be mapped to UE5 Manny/Quinn bones.
-
-For first validation, BVH is preferred because it is text-based and easier to inspect than FBX.
-
----
-
-## Step 2: Prepare the skeleton mapping profile
-
-Create or select a mapping file:
-
-```text
-samples/mappings/ue5_manny_quinn_default.json
-```
-
-This tells the pipeline how source joints map to Unreal bones.
-
-Example:
-
-```json
-{
-  "profileName": "ue5_manny_quinn_default",
-  "bindings": [
-    { "sourceJoint": "Hips", "targetBone": "pelvis" },
-    { "sourceJoint": "RightUpLeg", "targetBone": "thigh_r" },
-    { "sourceJoint": "RightLeg", "targetBone": "calf_r" },
-    { "sourceJoint": "RightFoot", "targetBone": "foot_r" }
-  ]
-}
-```
-
-The mapping profile should be treated as a real production asset. If the output animation looks twisted or flipped, fix the mapping or transform normalization rules rather than manually editing the final JSON every time.
-
----
-
-## Step 3: Start infrastructure
-
-Run Kafka and Redis:
-
-```bash
-docker compose up -d
-```
-
-Confirm containers are running:
-
-```bash
-docker ps
-```
-
----
-
-## Step 4: Start the ingestion service
-
-```bash
-mvn -pl ingestion-service spring-boot:run
-```
-
-Expected result:
-
-```text
-Started IngestionServiceApplication
-Tomcat started on port 8081
-```
-
----
-
-## Step 5: Start the processing service
-
-```bash
-mvn -pl processing-service spring-boot:run
-```
-
-Expected result:
-
-```text
-Started ProcessingServiceApplication
-Kafka consumer subscribed to aegis.animation.ingested
-```
-
----
-
-## Step 6: Upload the animation file as a job
-
-Using curl:
-
-```bash
-curl -X POST "http://localhost:8081/api/animation/jobs" \
-  -F "file=@samples/bvh/soccer_kick.bvh" \
-  -F "sourceFormat=BVH" \
-  -F "mappingProfile=ue5_manny_quinn_default" \
-  -F "actionName=SoccerKick"
-```
-
-Windows PowerShell:
+For a larger pass:
 
 ```powershell
-$uri = "http://localhost:8081/api/animation/jobs"
-$form = @{
-    file = Get-Item "samples/bvh/soccer_kick.bvh"
-    sourceFormat = "BVH"
-    mappingProfile = "ue5_manny_quinn_default"
-    actionName = "SoccerKick"
-}
-Invoke-RestMethod -Uri $uri -Method Post -Form $form
+.\scripts\v47-run-bandai-neural-overlay-api.ps1 -MaxClips 16
 ```
 
-Expected response:
+Final output:
+
+```text
+exports/bandai_soccer_kick_overlay_v47.json
+```
+
+Validate/import only if the JSON passes validation and visually makes sense. The current V48 production path is still preferred.
+
+---
+
+## 10. Legacy path B — traditional BVH to FBX to Unreal retarget
+
+Use this only if your Unreal IK Retargeter setup is stable. If editing retarget poses crashes the GPU, skip this path.
+
+### 10.1 Configure Unreal paths
+
+Edit:
+
+```text
+config/aegis_bandai_v45.config.json
+```
+
+Set:
 
 ```json
 {
-  "jobId": "5fb21071-68c6-4469-9075-3995e3d4afad",
-  "status": "QUEUED",
-  "message": "Animation job queued for processing."
+  "tools": {
+    "unrealEditorExe": "C:/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/UnrealEditor.exe",
+    "unrealEditorCmdExe": "C:/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/UnrealEditor-Cmd.exe"
+  },
+  "unreal": {
+    "project": "C:/UnrealProjects/AegisMotionSandbox/AegisMotionSandbox.uproject",
+    "pluginDir": "C:/UnrealProjects/AegisMotionSandbox/Plugins/AegisMotion",
+    "importPath": "/Game/AegisMotionTraining/BandaiNamco/Imported",
+    "retargetedPath": "/Game/AegisMotionTraining/BandaiNamco/RetargetedToManny",
+    "trainingJsonOutput": "sample-data/training-json"
+  }
 }
 ```
 
----
+### 10.2 Run the traditional script chain manually
 
-## Step 7: Track job progress
-
-Call:
-
-```bash
-curl "http://localhost:8081/api/animation/jobs/5fb21071-68c6-4469-9075-3995e3d4afad"
+```powershell
+.\scripts\01-clone-bandai-dataset.ps1
+.\scripts\02-extract-bandai-data.ps1
+.\scripts\03-select-bandai-clips.ps1
+.\scripts\04-convert-bandai-bvh-to-fbx.ps1
+.\scripts\05-launch-unreal-batch-import.ps1
 ```
 
-Expected intermediate response:
+At this point, Unreal should have imported the FBX animations.
 
-```json
-{
-  "jobId": "5fb21071-68c6-4469-9075-3995e3d4afad",
-  "status": "PROCESSING",
-  "progress": 65,
-  "stage": "GENERATING_CURVES"
-}
-```
-
-Expected final response:
-
-```json
-{
-  "jobId": "5fb21071-68c6-4469-9075-3995e3d4afad",
-  "status": "COMPLETED",
-  "progress": 100,
-  "stage": "COMPLETED",
-  "artifactPath": "output/overlays/SoccerKick.aegis-overlay.json"
-}
-```
-
----
-
-## Step 8: Validate the generated JSON
-
-Open the generated file:
-
-```text
-output/overlays/SoccerKick.aegis-overlay.json
-```
-
-Minimum validation checks:
-
-- `schemaVersion` exists.
-- `durationSeconds` is greater than `0`.
-- `bindings` is not empty.
-- `curves` is not empty.
-- At least one curve has at least two keys.
-- Curve times are normalized between `0.0` and `1.0`.
-- Rotation values are in degrees.
-- Target bone names match the Unreal skeleton.
-
-Optional command-line check with `jq`:
-
-```bash
-jq '.schemaVersion, .actionName, .durationSeconds, (.curves | length)' output/overlays/SoccerKick.aegis-overlay.json
-```
-
-Expected output:
-
-```text
-"aegis.overlay.v1"
-"SoccerKick"
-1.6
-12
-```
-
----
-
-## Step 9: Import the JSON into Unreal
-
-In Unreal Engine:
-
-1. Open `AegisMotionSandbox`.
-2. Make sure the Aegis Motion plugin is enabled.
-3. Open the Content Browser.
-4. Create or select an `Aegis Procedural Action Asset`.
-5. Use the Aegis importer tool.
-6. Select `output/overlays/SoccerKick.aegis-overlay.json`.
-7. Confirm the target skeleton/profile is UE5 Manny/Quinn.
-8. Import the curves into the action asset.
-9. Save the asset.
-
-Recommended asset location:
-
-```text
-/Game/Aegis/Actions/SoccerKick_AegisAction
-```
-
----
-
-## Step 10: Test the imported action in the animation driver
+### 10.3 Manual Unreal retarget step
 
 In Unreal:
 
-1. Open the Character Blueprint.
-2. Add or confirm the `AegisProceduralActionComponent` exists.
-3. Assign or trigger the imported `SoccerKick_AegisAction` asset.
-4. Open the Animation Blueprint.
-5. Confirm the `Aegis Procedural Motion Driver` node is in the graph.
-6. Feed the base pose into the driver.
-7. Play in editor.
-8. Trigger the action.
-9. Enable debug if needed:
+1. Open the relevant IK Rig / IK Retargeter.
+2. Retarget imported Bandai FBX animation sequences to Manny/Quinn.
+3. Save retargeted `AnimSequence` assets to:
 
 ```text
-aegis.Motion.DebugProceduralDriver 2
+/Game/AegisMotionTraining/BandaiNamco/RetargetedToManny
 ```
 
-Expected result:
+Then export the retargeted animation sequences:
 
-- The action runs from start to finish.
-- Curves drive the mapped bones.
-- The motion blends back into the base pose.
-- Debug visualization shows affected bones and applied rotations.
+```powershell
+.\scripts\06-export-retargeted-animsequences.ps1
+```
 
----
+Continue data generation:
 
-## Step 11: Tune the action in Unreal
+```powershell
+.\scripts\07-build-training-manifest.ps1
+.\scripts\08-build-bandai-training-dataset.ps1
+.\scripts\09-train-bandai-motion-prior.ps1
+.\scripts\10-generate-bandai-soccer-kick-overlay.ps1
+.\scripts\11-verify-overlay-json.ps1
+```
 
-After import, the JSON should not be treated as final animation polish. It should be treated as generated procedural source data.
-
-Technical animators can tune:
-
-- Rotation multipliers.
-- Per-bone alpha values.
-- Curve keys.
-- Blend-in and blend-out settings.
-- Damping and smoothing values.
-- Which bones/chains are enabled.
-- Debug visualization settings.
-
-Recommended workflow:
+Final legacy output:
 
 ```text
-Generated JSON gives the first accurate pass.
-Unreal data asset gives the designer-tuned final behavior.
+exports/bandai_soccer_kick_overlay_v47.json
 ```
 
----
+### 10.4 Traditional path warning
 
-# 16. Expected processing stages
-
-The processing service should progress through these stages:
+The traditional path can produce technically valid JSON that still looks bad if:
 
 ```text
-CREATED
-QUEUED
-READING_SOURCE_FILE
-PARSING_HIERARCHY
-PARSING_MOTION_FRAMES
-APPLYING_SKELETON_MAPPING
-NORMALIZING_TRANSFORMS
-GENERATING_CURVES
-VALIDATING_JSON
-WRITING_ARTIFACT
-COMPLETED
+source clip semantics are wrong
+retarget pose is wrong
+axis mapping is wrong
+Euler/scalar curves are used as final runtime rotations
+leg/knee/foot coupling is lost
 ```
 
-A single hung job should not block another job. Each job must be tracked by its own `jobId`, and the processing service should catch failures per job rather than failing the entire consumer loop.
+For high-quality soccer kicks, use the V48 quaternion no-retarget path.
 
 ---
 
-## 17. Transform normalization rules
+## 11. API reference
 
-This is the most important part of the pipeline for animation quality.
+The dashboard uses the same REST API.
 
-The processing service should own the conversion from source animation space into Aegis/Unreal space.
-
-Recommended normalization responsibilities:
-
-- Convert source units to centimeters.
-- Convert source up-axis to Unreal's expected orientation.
-- Convert source rotations to degrees.
-- Preserve signed rotation direction.
-- Apply mapping-profile-specific axis corrections.
-- Remove or isolate root motion if the overlay should only be additive.
-- Generate clean per-bone local curves.
-- Avoid baking temporary retargeting mistakes into the final JSON.
-
-If the animation imports with strange rotations, the likely causes are:
-
-- Incorrect source-to-target joint mapping.
-- Axis mismatch.
-- Wrong rotation order.
-- Incorrect handedness conversion.
-- Parent/child local transform conversion error.
-- Applying world-space transforms where local-space transforms are expected.
-
-Do not solve these by randomly changing curve values. Fix the conversion layer.
-
----
-
-## 18. Recommended API endpoints
-
-### Create job
+### 11.1 Health check
 
 ```http
-POST /api/animation/jobs
-Content-Type: multipart/form-data
+GET http://localhost:8088/api/v1/health
 ```
 
-Form fields:
-
-| Field | Required | Example |
-|---|---:|---|
-| `file` | Yes | `soccer_kick.bvh` |
-| `sourceFormat` | Yes | `BVH` |
-| `mappingProfile` | Yes | `ue5_manny_quinn_default` |
-| `actionName` | Yes | `SoccerKick` |
-
-### Get job status
+### 11.2 Start a V48 AI job
 
 ```http
-GET /api/animation/jobs/{jobId}
-```
-
-### Download artifact
-
-```http
-GET /api/animation/jobs/{jobId}/artifact
-```
-
-### Validate overlay JSON
-
-```http
-POST /api/animation/overlays/validate
+POST http://localhost:8088/api/v1/pipelines/bandai/run
 Content-Type: application/json
 ```
 
----
-
-## 19. Error handling expectations
-
-A professional pipeline should fail clearly and recover safely.
-
-Recommended failure behavior:
-
-- Mark only the affected job as `FAILED`.
-- Store a clear error message in Redis.
-- Publish a failure event to `aegis.animation.failed`.
-- Continue processing later jobs.
-- Never allow one stuck or malformed animation file to block the whole pipeline.
-
-Example failure response:
+Body:
 
 ```json
 {
-  "jobId": "5fb21071-68c6-4469-9075-3995e3d4afad",
-  "status": "FAILED",
-  "stage": "APPLYING_SKELETON_MAPPING",
-  "error": "Source joint RightUpLeg could not be mapped to target skeleton profile ue5_manny_quinn_default."
+  "configPath": "config/aegis_v48_no_retarget.config.json",
+  "pipelineMode": "V48_QUATERNION_NO_RETARGET",
+  "skipTraining": false,
+  "action": "soccer_kick_overlay",
+  "kickStyle": "instep_power_shot",
+  "dominantLeg": "right",
+  "variantCount": 35,
+  "durationSeconds": 1.35,
+  "intensity": 1.0,
+  "followThrough": 0.7,
+  "plantStability": 0.92,
+  "upperBodyCounterbalance": 0.78
 }
 ```
 
----
+### 11.3 Start a legacy Bandai/BVH job
 
-## 20. Troubleshooting
-
-### Maven cannot find `com.aegis:common`
-
-Build from the parent root:
-
-```bash
-mvn clean install
+```json
+{
+  "configPath": "config/aegis_bandai_v45.config.json",
+  "pipelineMode": "LEGACY_BANDAI_EXPERIMENTAL",
+  "skipClone": false,
+  "skipTraining": true,
+  "useOfflineRetarget": true,
+  "pauseForManualRetarget": false,
+  "action": "soccer_kick_overlay",
+  "style": "active",
+  "dominantLeg": "right",
+  "maxClips": 1
+}
 ```
 
-Do not run `mvn spring-boot:run` inside a child module before the shared `common` module has been installed or included in the reactor build.
+### 11.4 Job endpoints
 
----
+```http
+GET    /api/v1/jobs
+GET    /api/v1/jobs/{jobId}
+GET    /api/v1/jobs/{jobId}/logs
+GET    /api/v1/jobs/{jobId}/logs/tail?limit=140
+DELETE /api/v1/jobs/{jobId}
+DELETE /api/v1/jobs?terminalOnly=true
+GET    /api/v1/exports/latest
+```
 
-### Spring Boot cannot find the main class
+### 11.5 Continue after manual retarget
 
-Add `start-class` to the service module `pom.xml`.
+Only for the traditional Unreal manual-retarget path:
 
-Example:
-
-```xml
-<properties>
-    <start-class>com.aegis.processing.ProcessingServiceApplication</start-class>
-</properties>
+```http
+POST /api/v1/jobs/{jobId}/continue-after-retarget
 ```
 
 ---
 
-### Kafka consumer does not receive jobs
+## 12. Importing the generated JSON into AegisMotion
+
+Use the AegisMotion plugin importer/custom data asset workflow.
+
+Recommended import target for V48:
+
+```text
+exports/aegis_v48_quaternion_soccer_kick_overlay.json
+```
+
+The plugin/runtime should use quaternion curves first:
+
+```text
+rot_qx
+rot_qy
+rot_qz
+rot_qw
+```
+
+Scalar `rot_x / rot_y / rot_z` curves should be treated only as debug/fallback for production generated soccer kicks.
+
+Recommended first test settings:
+
+```text
+Playback Mode: LiveBaseGeneratedOverlay
+Base Pose Mode: UseLiveAnimGraphSourcePoseEveryFrame
+Foot Lock / generated IK: OFF for first quality test
+Global alpha: 1.0
+Relevant bone weights: 1.0
+```
+
+Trigger the overlay while Manny/Quinn locomotion or the intended base pose is already playing. This is an overlay, not a full standalone locomotion clip.
+
+---
+
+## 13. Cleaning, restarting, and avoiding hung jobs
+
+### 13.1 Normal restart
+
+Close old orchestrator and worker windows.
+
+Then:
+
+```powershell
+.\scripts\v46-start-infra.ps1
+.\scripts\v46-start-orchestrator.ps1
+.\scripts\v46-start-worker.ps1
+.\scripts\v46-open-dashboard.ps1
+```
+
+### 13.2 Full infrastructure stop
+
+```powershell
+.\scripts\v46-stop-infra.ps1
+```
+
+Then start again:
+
+```powershell
+.\scripts\v46-start-infra.ps1
+```
+
+### 13.3 Delete old job states from dashboard
+
+Use:
+
+```text
+Delete selected
+Delete completed/failed
+```
+
+Do not delete a running job unless you have already stopped the worker/orchestrator and know the process is no longer running.
+
+### 13.4 If a job is stuck at 0%
+
+Usually this means the worker is not running or not consuming commands.
 
 Check:
 
-- Kafka is running.
-- The topic name matches in both services.
-- The processing service uses the same bootstrap server.
-- The consumer group is not stuck on an old offset.
-- The ingestion service actually publishes after file upload.
+```text
+PowerShell window running v46-start-worker.ps1 is open
+Kafka is running on localhost:9092
+Redis is running on localhost:6379
+Orchestrator is reachable at http://localhost:8088/api/v1/health
+```
 
-Useful reset during local development:
+Restart cleanly:
 
-```bash
-docker compose down
-docker compose up -d
+```powershell
+# close old orchestrator/worker windows first
+.\scripts\v46-start-orchestrator.ps1
+.\scripts\v46-start-worker.ps1
+```
+
+### 13.5 If a job is stuck at validation
+
+V48.6 adds step timeouts and process-tree cleanup. Validation should normally finish in seconds.
+
+Check whether this file exists:
+
+```powershell
+Test-Path .\exports\aegis_v48_quaternion_soccer_kick_overlay.json.validation.json
+```
+
+Open it:
+
+```powershell
+Get-Content .\exports\aegis_v48_quaternion_soccer_kick_overlay.json.validation.json
+```
+
+If it says `"valid": true`, the JSON is usable even if the dashboard was behind.
+
+You can run validation manually:
+
+```powershell
+.\scripts\v48-06-validate-import-json.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+```
+
+### 13.6 Timeout environment variables
+
+Optional overrides:
+
+```powershell
+$env:AEGIS_VALIDATION_TIMEOUT_SECONDS = "180"
+$env:AEGIS_V48_STEP_TIMEOUT_SECONDS = "600"
+$env:AEGIS_TRAINING_TIMEOUT_SECONDS = "1800"
 ```
 
 ---
 
-### Redis job status stays at `QUEUED`
+## 14. Development notes and best practices
 
-Likely causes:
+### 14.1 Recommended production workflow
 
-- Processing service is not running.
-- Kafka event was not published.
-- Topic name mismatch.
-- Consumer crashed while parsing.
-- Redis key was written but not updated after processing started.
+Use this for the main portfolio-quality soccer kick:
+
+```text
+V48 Quaternion No-Retarget
+→ generate 20-50 clean synthetic variants from V36 gold reference
+→ train/refine quaternion prior
+→ export final quaternion import JSON
+→ validate
+→ import into Aegis data asset
+→ record Unreal preview
+→ iterate style/intensity/follow-through/plant stability
+```
+
+### 14.2 When to skip training
+
+Use `skipTraining` for:
+
+```text
+quick dashboard smoke tests
+checking service health
+checking config path correctness
+checking import format
+```
+
+Do not use `skipTraining` for final quality review unless the fallback already looks good.
+
+### 14.3 When to use legacy BVH
+
+Use legacy BVH only for:
+
+```text
+researching external mocap data
+building future datasets
+comparing source motion against V48 synthetic results
+experimenting with offline retargeting
+```
+
+Do not use legacy BVH as the main production path while Unreal retarget-pose editing is unstable.
+
+### 14.4 Job concurrency
+
+The current worker is effectively single-lane because outputs use shared paths:
+
+```text
+exports/aegis_v48_quaternion_soccer_kick_overlay.json
+generated/v48/
+datasets/bandai_v47_neural_overlay/
+```
+
+Run one generation job at a time. If you need parallel jobs later, add per-job output directories first.
 
 ---
 
-### Job gets stuck at `VALIDATING_JSON`
+## 15. Quick command cheat sheet
 
-Likely causes:
+### First-time setup
 
-- Validator is throwing but not marking the job as failed.
-- JSON artifact is never written to disk.
-- Empty curves are being generated.
-- The validation stage expects required fields that the exporter did not populate.
+```powershell
+cd C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+pip install -r requirements.txt
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+.\scripts\v46-start-infra.ps1
+.\scripts\v46-build-backend.ps1
+```
 
-Required behavior:
+### Start services
 
-- Catch the validation exception.
-- Set the job to `FAILED`.
-- Store the exact validation error.
-- Allow later jobs to continue.
+```powershell
+# Window 1
+.\scripts\v46-start-orchestrator.ps1
 
----
+# Window 2
+.\scripts\v46-start-worker.ps1
 
-### Generated JSON imports but has no curves
+# Window 3 or browser
+.\scripts\v46-open-dashboard.ps1
+```
 
-Likely causes:
+### Manual V48 run
 
-- Source joints did not match target bindings.
-- Curves were filtered out because values were all zero.
-- Exporter wrote metadata but skipped channels.
-- The Unreal importer expects a different field name than the JSON exporter wrote.
-- The pipeline wrote frame samples but not curve key arrays.
+```powershell
+.\scripts\v48-01-load-gold-overlay.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-02-generate-quaternion-variants.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-03-build-quaternion-dataset.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-04-train-quaternion-prior.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-05-generate-import-json.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+.\scripts\v48-06-validate-import-json.ps1 -ConfigPath config\aegis_v48_no_retarget.config.json
+```
 
-Check:
+### Legacy Bandai smoke job through API
 
-```bash
-jq '.curves | length' output/overlays/SoccerKick.aegis-overlay.json
-jq '.curves[0]' output/overlays/SoccerKick.aegis-overlay.json
+```powershell
+.\scripts\v47-run-bandai-neural-overlay-api.ps1 -SkipTraining -MaxClips 1
+```
+
+### Open latest V48 output
+
+```powershell
+notepad .\exports\aegis_v48_quaternion_soccer_kick_overlay.json.validation.json
 ```
 
 ---
 
-## 21. Quality checklist before importing into Unreal
+## 16. Final recommendation
 
-Before importing a generated overlay JSON, confirm:
+For the AegisMotion soccer-kick portfolio piece, use:
 
-- The file opens as valid JSON.
-- `schemaVersion` is correct.
-- `durationSeconds` is correct.
-- Target bone names match the Unreal skeleton.
-- Curves are present.
-- Curve keys are normalized from `0.0` to `1.0`.
-- Rotation values are in degrees.
-- Translation values are in centimeters if present.
-- There are no unmapped critical joints.
-- The action name is clean and editor-friendly.
-
----
-
-## 22. Professional portfolio framing
-
-This pipeline demonstrates backend engineering applied to game-development tooling:
-
-- Java/Spring Boot service design.
-- Kafka-based asynchronous job processing.
-- Redis-backed job state and progress tracking.
-- JSON schema design and validation.
-- Data transformation from source files to engine-facing runtime data.
-- Toolchain integration between backend services and Unreal Engine.
-- Practical animation pipeline thinking: source data, mapping, normalization, validation, import, tuning, and runtime playback.
-
-The important portfolio message is not that this replaces a studio animation pipeline. The stronger message is that it shows the ability to build reliable tools around complex data, integrate them with game-engine workflows, and think about production concerns such as validation, observability, failure isolation, and maintainability.
-
----
-
-## 23. Minimal end-to-end command summary
-
-```bash
-# 1. Start Kafka and Redis
-docker compose up -d
-
-# 2. Build all modules
-mvn clean install
-
-# 3. Run ingestion service
-mvn -pl ingestion-service spring-boot:run
-
-# 4. Run processing service in another terminal
-mvn -pl processing-service spring-boot:run
-
-# 5. Upload BVH source animation
-curl -X POST "http://localhost:8081/api/animation/jobs" \
-  -F "file=@samples/bvh/soccer_kick.bvh" \
-  -F "sourceFormat=BVH" \
-  -F "mappingProfile=ue5_manny_quinn_default" \
-  -F "actionName=SoccerKick"
-
-# 6. Poll job status
-curl "http://localhost:8081/api/animation/jobs/{jobId}"
-
-# 7. Inspect generated JSON
-jq '.schemaVersion, .actionName, .durationSeconds, (.curves | length)' output/overlays/SoccerKick.aegis-overlay.json
-
-# 8. Import the JSON into the Aegis Motion Unreal plugin
+```text
+V48 Quaternion No-Retarget
 ```
 
----
-
-## 24. Roadmap
-
-Planned improvements:
-
-- Full FBX adapter with explicit transform-space validation.
-- AMC adapter for CMU mocap workflows.
-- JSON schema file published under `common/schema`.
-- Web dashboard for job status and artifact download.
-- Visual curve inspection page.
-- Batch processing for animation folders.
-- Golden test fixtures for known motions such as kick, punch, recoil, and locomotion lean.
-- Automated Unreal import test fixtures.
-- Better detection of axis and handedness errors.
-- Per-bone confidence/warning output in generated JSON.
-
----
-
-## 25. Definition of done for a generated JSON
-
-A generated overlay JSON is considered complete when:
-
-1. The pipeline job reaches `COMPLETED`.
-2. The artifact exists under `output/overlays`.
-3. JSON validation passes.
-4. The file contains non-empty curves.
-5. All required UE target bones are mapped.
-6. Unreal importer accepts the file.
-7. An Aegis Procedural Action Asset is populated.
-8. The action plays through the Aegis Procedural Motion Driver.
-9. The motion can be debugged and tuned in Unreal.
-10. Starting a new job is not affected by any previous failed or completed job.
-
+Treat the legacy Bandai/BVH path as research. The professional-quality route is Manny/Quinn-native quaternion overlay generation from a trusted gold reference, refined by ML, validated as an Aegis import JSON, and reviewed in Unreal through the actual plugin runtime.
