@@ -1,0 +1,103 @@
+{
+  "version": "V46.37",
+  "sourceRoot": "joint_Root",
+  "targetRoot": "pelvis",
+  "chains": {
+    "pelvis": {
+      "source": "joint_Root",
+      "target": "pelvis"
+    },
+    "spine_01": {
+      "source": "Hips",
+      "target": "spine_01"
+    },
+    "spine_02": {
+      "source": "Spine",
+      "target": "spine_02"
+    },
+    "spine_03": {
+      "source": "Chest",
+      "target": "spine_03"
+    },
+    "neck_01": {
+      "source": "Neck",
+      "target": "neck_01"
+    },
+    "head": {
+      "source": "Head",
+      "target": "head"
+    },
+    "thigh_l": {
+      "source": "UpperLeg_L",
+      "target": "thigh_l"
+    },
+    "calf_l": {
+      "source": "LowerLeg_L",
+      "target": "calf_l"
+    },
+    "foot_l": {
+      "source": "Foot_L",
+      "target": "foot_l"
+    },
+    "ball_l": {
+      "source": "Toes_L",
+      "target": "ball_l"
+    },
+    "thigh_r": {
+      "source": "UpperLeg_R",
+      "target": "thigh_r"
+    },
+    "calf_r": {
+      "source": "LowerLeg_R",
+      "target": "calf_r"
+    },
+    "foot_r": {
+      "source": "Foot_R",
+      "target": "foot_r"
+    },
+    "ball_r": {
+      "source": "Toes_R",
+      "target": "ball_r"
+    },
+    "clavicle_l": {
+      "source": "Shoulder_L",
+      "target": "clavicle_l"
+    },
+    "upperarm_l": {
+      "source": "UpperArm_L",
+      "target": "upperarm_l"
+    },
+    "lowerarm_l": {
+      "source": "LowerArm_L",
+      "target": "lowerarm_l"
+    },
+    "hand_l": {
+      "source": "Hand_L",
+      "target": "hand_l"
+    },
+    "clavicle_r": {
+      "source": "Shoulder_R",
+      "target": "clavicle_r"
+    },
+    "upperarm_r": {
+      "source": "UpperArm_R",
+      "target": "upperarm_r"
+    },
+    "lowerarm_r": {
+      "source": "LowerArm_R",
+      "target": "lowerarm_r"
+    },
+    "hand_r": {
+      "source": "Hand_R",
+      "target": "hand_r"
+    }
+  },
+  "contactBones": {
+    "leftFoot": {
+      "target": "foot_l"
+    },
+    "rightFoot": {
+      "target": "foot_r"
+    }
+  }
+}

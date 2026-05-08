@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Aegis Training Manifest",
+  "type": "object",
+  "required": [
+    "datasetName",
+    "skeletonProfile",
+    "clips"
+  ],
+  "properties": {
+    "datasetName": {
+      "type": "string"
+    },
+    "skeletonProfile": {
+      "type": "string",
+      "enum": [
+        "UE5_Mannequin",
+        "Manny",
+        "Quinn"
+      ]
+    },
+    "clips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "action",
+          "style"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "style": {
+            "type": "string"
+          },
+          "dominantLeg": {
+            "type": "string",
+            "enum": [
+              "right",
+              "left",
+              "unknown"
+            ]
+          },
+          "quality": {
+            "type": "string"
+          },
+          "phaseLabels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "license": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

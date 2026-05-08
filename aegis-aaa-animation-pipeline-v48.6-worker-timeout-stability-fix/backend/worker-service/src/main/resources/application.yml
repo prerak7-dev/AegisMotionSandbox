@@ -1,0 +1,32 @@
+server:
+  port: ${AEGIS_WORKER_PORT:8090}
+
+spring:
+  application:
+    name: aegis-worker-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: aegis-worker-v47
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "com.aegis.common.events,com.aegis.common.model,java.util,java.time"
+    producer:
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        spring.json.add.type.headers: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+aegis:
+  worker:
+    pipeline-root: ${AEGIS_PIPELINE_ROOT:.}
+    powershell-exe: ${AEGIS_POWERSHELL_EXE:powershell.exe}
+
+logging:
+  level:
+    com.aegis: INFO

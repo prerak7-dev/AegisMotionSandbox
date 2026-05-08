@@ -1,0 +1,9 @@
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\AegisWorkerApplication.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\config\JacksonConfig.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\config\WorkerConfig.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\config\WorkerProperties.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\kafka\PipelineCommandConsumer.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\service\ProcessRunner.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\service\StepExecutor.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\service\StepPlanner.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\worker-service\src\main\java\com\aegis\worker\service\WorkerJobStore.java

@@ -1,0 +1,16 @@
+{
+  "valid": true,
+  "path": "C:\\UnrealProjects\\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\\exports\\aegis_v48_quaternion_soccer_kick_overlay.json",
+  "schema": "aegis.overlay.curves.v2",
+  "sourceFormat": "AI_NATIVE_UE5_MANNEQUIN_LIVE_BASE_OVERLAY_V48_QUATERNION_NO_RETARGET",
+  "durationSeconds": 1.35,
+  "frameCount": 163,
+  "curveCount": 164,
+  "quatCurveCount": 88,
+  "phaseCount": 10,
+  "badQuatNormCount": 0,
+  "nonIdentityFirstFrameBoneCount": 0,
+  "scalarRuntimeCurveCount": 0,
+  "warnings": [],
+  "errors": []
+}

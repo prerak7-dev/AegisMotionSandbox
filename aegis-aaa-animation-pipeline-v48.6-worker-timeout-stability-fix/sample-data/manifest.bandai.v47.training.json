@@ -1,0 +1,26 @@
+{
+  "datasetName": "aegis_bandai_v47_neural_overlay_training",
+  "version": "V47",
+  "skeletonProfile": "UE5_Mannequin",
+  "sourceDirs": [
+    "/mnt/data/v471/aegis-aaa-animation-pipeline-v47-neural-overlay/sample-data/training-json/offline-retargeted",
+    "/mnt/data/v471/aegis-aaa-animation-pipeline-v47-neural-overlay/sample-data/training-json"
+  ],
+  "clips": [
+    {
+      "id": "bandai_dash_active_dataset-1_dash_active_001_manny_training",
+      "path": "training-json/offline-retargeted/bandai_dash_active_dataset-1_dash_active_001_manny_training.json",
+      "action": "dash",
+      "content": "dash",
+      "style": "active",
+      "dominantLeg": "right",
+      "quality": "offline_retargeted_bvh_to_manny",
+      "license": "CC_BY_NC_4_0",
+      "sourceFormat": "aegis.offlineRetarget.trainingFrames.v1",
+      "sourceBvh": "C:\\Mocap\\Bandai-Namco-Research-Motiondataset\\dataset\\Bandai-Namco-Research-Motiondataset-1\\data\\dataset-1_dash_active_001.bvh",
+      "durationSeconds": 2.8,
+      "frameCount": 85,
+      "notes": "Offline-retargeted Manny/Quinn JSON for V47 neural overlay training"
+    }
+  ]
+}

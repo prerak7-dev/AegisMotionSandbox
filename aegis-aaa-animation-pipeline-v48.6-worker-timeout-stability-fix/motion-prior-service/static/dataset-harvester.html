@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Aegis V38 Motion Data Harvester</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+:root{--bg:#0b0d12;--panel:#151923;--panel2:#1d2330;--text:#eef2ff;--muted:#a8b0c3;--line:#30384b;--accent:#8db3ff;--warn:#ffd166;--bad:#ff8c8c;--good:#8cf2bd}
+body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text)}
+header{padding:28px 34px;border-bottom:1px solid var(--line);background:linear-gradient(135deg,#121826,#0b0d12)}
+h1{margin:0 0 8px;font-size:28px}
+p{line-height:1.5}
+main{display:grid;grid-template-columns:380px 1fr;gap:22px;padding:22px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 12px 36px rgba(0,0,0,.25)}
+.source{padding:12px;border:1px solid var(--line);border-radius:12px;margin:10px 0;cursor:pointer;background:var(--panel2)}
+.source:hover{border-color:var(--accent)}
+.source.active{outline:2px solid var(--accent)}
+.badge{display:inline-block;border-radius:999px;padding:3px 8px;font-size:12px;margin-top:8px}
+.low{background:#0d3b2a;color:var(--good)}.low_medium,.check_license{background:#263d5d;color:#bbd5ff}.noncommercial,.high_license_restriction{background:#514418;color:var(--warn)}.do_not_train{background:#57262a;color:var(--bad)}.user_responsibility{background:#3a334f;color:#d6c6ff}
+label{display:block;margin:12px 0 6px;color:#d9def0}
+input,select,textarea{width:100%;box-sizing:border-box;padding:10px;border-radius:10px;background:#0f1320;color:var(--text);border:1px solid var(--line)}
+button{border:0;border-radius:12px;padding:12px 16px;background:var(--accent);color:#071120;font-weight:700;cursor:pointer;margin-top:14px}
+button.secondary{background:#252d3d;color:var(--text)}
+pre{white-space:pre-wrap;background:#090b10;border:1px solid var(--line);border-radius:12px;padding:14px;overflow:auto;max-height:380px}
+.notice{border-left:4px solid var(--warn);padding:10px 12px;background:#1c1a12;border-radius:8px;margin:12px 0;color:#f6e9ba}
+.goodbox{border-left:4px solid var(--good);padding:10px 12px;background:#0e1c16;border-radius:8px;margin:12px 0}
+a{color:var(--accent)}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+<h1>Aegis V38 Motion Data Harvester</h1>
+<p>Fetch public/raw animation sources into <code>sample-data/raw</code>, append a raw manifest, then retarget/export to UE5 Manny/Quinn Aegis JSON before training the V37/V38 motion prior.</p>
+</header>
+<main>
+<section class="card">
+<h2>Sources</h2>
+<div id="sources">Loading…</div>
+</section>
+<section class="card">
+<h2 id="title">Select a source</h2>
+<p id="description" class="muted"></p>
+<div id="license" class="notice" style="display:none"></div>
+<div id="docs"></div>
+<form id="form"></form>
+<div class="goodbox">
+<strong>Training workflow:</strong>
+<ol>
+<li>Fetch raw data here.</li>
+<li>Retarget in Unreal/Blender to UE5 Manny/Quinn.</li>
+<li>Export Aegis JSON clips.</li>
+<li>Add those retargeted JSONs to the training manifest.</li>
+<li>Run <code>build-motion-dataset.ps1</code> and <code>train-motion-prior.ps1</code>.</li>
+</ol>
+</div>
+<h3>Result</h3>
+<pre id="result">No fetch yet.</pre>
+</section>
+</main>
+<script>
+let SOURCES = [];
+let selected = null;
+
+function badgeClass(risk){
+  if(!risk) return "check_license";
+  return String(risk).replaceAll("_","_");
+}
+
+async function loadSources(){
+  const res = await fetch("/api/sources");
+  const data = await res.json();
+  SOURCES = data.sources;
+  const box = document.getElementById("sources");
+  box.innerHTML = "";
+  for(const s of SOURCES){
+    const div = document.createElement("div");
+    div.className = "source";
+    div.innerHTML = `<strong>${s.label}</strong><br><small>${s.recommendedUse || ""}</small><br><span class="badge ${s.riskLevel}">${s.riskLevel}</span>`;
+    div.onclick = () => selectSource(s.id);
+    div.id = "src_" + s.id;
+    box.appendChild(div);
+  }
+}
+
+function selectSource(id){
+  selected = SOURCES.find(s=>s.id===id);
+  document.querySelectorAll(".source").forEach(e=>e.classList.remove("active"));
+  document.getElementById("src_"+id).classList.add("active");
+  document.getElementById("title").textContent = selected.label;
+  document.getElementById("description").textContent = selected.recommendedUse || "";
+  const lic = document.getElementById("license");
+  lic.style.display = "block";
+  lic.innerHTML = `<strong>License/training note:</strong> ${selected.licenseSummary || "Check license."}<br><strong>Training allowed:</strong> ${selected.trainingAllowed}`;
+  const docs = document.getElementById("docs");
+  docs.innerHTML = selected.docsUrl ? `<p><a href="${selected.docsUrl}" target="_blank">Open source documentation</a></p>` : "";
+
+  const form = document.getElementById("form");
+  form.innerHTML = "";
+
+  if(selected.trainingAllowed === false){
+    form.innerHTML = `<div class="notice"><strong>This source is blocked for ML training in this pipeline.</strong> It is shown so you do not accidentally train on it.</div>`;
+    return;
+  }
+
+  for(const field of selected.fields || []){
+    const label = document.createElement("label");
+    label.textContent = field.label;
+    form.appendChild(label);
+    let input;
+    if(field.type === "select"){
+      input = document.createElement("select");
+      for(const opt of field.options || []){
+        const o = document.createElement("option");
+        o.value = opt; o.textContent = opt;
+        input.appendChild(o);
+      }
+    } else {
+      input = document.createElement("input");
+      input.type = field.type || "text";
+      input.placeholder = field.placeholder || "";
+    }
+    input.name = field.name;
+    form.appendChild(input);
+  }
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "Fetch / Register Source";
+  btn.onclick = submitFetch;
+  form.appendChild(btn);
+
+  const warn = document.createElement("button");
+  warn.type = "button";
+  warn.className = "secondary";
+  warn.textContent = "Show retargeting reminder";
+  warn.onclick = () => {
+    document.getElementById("result").textContent =
+`Raw BVH/FBX/ASF/AMC is not directly trainable for your Aegis model.
+
+Required next step:
+1. Import/retarget to UE5 Manny/Quinn.
+2. Export Aegis JSON with:
+   - playbackMode = LiveBaseGeneratedOverlay where possible
+   - pelvis.loc_x/y/z
+   - bone.rot_qx/qy/qz/qw
+   - foot contact curves
+3. Put those exported JSONs in a training manifest.`;
+  };
+  form.appendChild(warn);
+}
+
+async function submitFetch(){
+  const form = document.getElementById("form");
+  const params = {};
+  for(const el of form.querySelectorAll("input,select")){
+    if(el.name && el.value) params[el.name] = el.value;
+  }
+  document.getElementById("result").textContent = "Fetching...";
+  try{
+    const res = await fetch("/api/fetch",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({source:selected.id, params})
+    });
+    const text = await res.text();
+    let data;
+    try{ data = JSON.parse(text); } catch { data = {raw:text}; }
+    document.getElementById("result").textContent = JSON.stringify(data,null,2);
+  }catch(err){
+    document.getElementById("result").textContent = String(err);
+  }
+}
+
+loadSources();
+</script>
+</body>
+</html>

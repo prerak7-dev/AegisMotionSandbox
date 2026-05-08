@@ -1,0 +1,10 @@
+numpy>=1.24
+pydantic>=2.0
+fastapi>=0.110
+uvicorn>=0.24
+pyyaml>=6.0
+huggingface_hub>=0.20
+# PyTorch is required for V47 neural training/inference.
+# Install the CPU or CUDA build recommended for your machine from pytorch.org.
+# Example CPU install:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu

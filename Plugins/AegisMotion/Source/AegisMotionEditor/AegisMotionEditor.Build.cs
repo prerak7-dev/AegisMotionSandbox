@@ -26,6 +26,14 @@ public class AegisMotionEditor : ModuleRules
             "EditorFramework",
             "PropertyEditor",
             "ToolMenus",
+            "DesktopPlatform",
+            "Json",
+            "JsonUtilities",
+            "ContentBrowser",
+            "AssetTools",
+            "AnimationBlueprintLibrary",
+            "Projects",
+            "AssetRegistry",
         });
     }
 }

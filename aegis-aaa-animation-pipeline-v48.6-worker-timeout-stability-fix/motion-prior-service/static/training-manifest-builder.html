@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Aegis V40 Training Manifest Builder</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+body{margin:0;background:#0b0d12;color:#eef2ff;font-family:Segoe UI,Arial,sans-serif}
+header{padding:26px 34px;border-bottom:1px solid #30384b;background:#121826}
+main{padding:22px;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card{background:#151923;border:1px solid #30384b;border-radius:14px;padding:18px}
+input,select,textarea{width:100%;box-sizing:border-box;background:#0f1320;color:#eef2ff;border:1px solid #30384b;border-radius:10px;padding:10px;margin:5px 0 12px}
+button{background:#8db3ff;border:0;border-radius:10px;padding:11px 14px;font-weight:700;cursor:pointer}
+pre{white-space:pre-wrap;background:#090b10;border:1px solid #30384b;border-radius:10px;padding:12px;max-height:520px;overflow:auto}
+label{color:#c8d1e8;font-size:14px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+<h1>Aegis V40 Training Manifest Builder</h1>
+<p>Create a manifest from Manny/Quinn-retargeted Aegis JSON clips. This is the file used by the V37–V43 tensor builder/trainer.</p>
+</header>
+<main>
+<section class="card">
+<h2>Add clip</h2>
+<label>Dataset name</label><input id="datasetName" value="aegis_manny_motion_prior_v1"/>
+<label>Skeleton profile</label><select id="skeletonProfile"><option>UE5_Mannequin</option><option>Manny</option><option>Quinn</option></select>
+<label>Clip ID</label><input id="clipId" placeholder="kick_001"/>
+<label>Path relative to sample-data</label><input id="path" placeholder="training-json/kick_001.json"/>
+<label>Action</label><input id="action" value="soccer_kick_overlay"/>
+<label>Style</label><input id="style" value="powerful"/>
+<label>Dominant leg</label><select id="dominantLeg"><option>right</option><option>left</option><option>unknown</option></select>
+<label>Quality</label><select id="quality"><option>authored</option><option>retargeted</option><option>mocap_cleaned</option><option>generated_seed</option></select>
+<label>Notes</label><textarea id="notes"></textarea>
+<button onclick="addClip()">Add clip</button>
+<button onclick="downloadManifest()">Download manifest.training.json</button>
+</section>
+<section class="card">
+<h2>Manifest preview</h2>
+<pre id="preview"></pre>
+</section>
+</main>
+<script>
+let manifest={datasetName:"aegis_manny_motion_prior_v1",skeletonProfile:"UE5_Mannequin",clips:[]};
+function refresh(){
+ manifest.datasetName=document.getElementById("datasetName").value;
+ manifest.skeletonProfile=document.getElementById("skeletonProfile").value;
+ document.getElementById("preview").textContent=JSON.stringify(manifest,null,2);
+}
+function addClip(){
+ refresh();
+ manifest.clips.push({
+   id:document.getElementById("clipId").value,
+   path:document.getElementById("path").value,
+   action:document.getElementById("action").value,
+   style:document.getElementById("style").value,
+   dominantLeg:document.getElementById("dominantLeg").value,
+   quality:document.getElementById("quality").value,
+   notes:document.getElementById("notes").value
+ });
+ refresh();
+}
+function downloadManifest(){
+ refresh();
+ const blob=new Blob([JSON.stringify(manifest,null,2)],{type:"application/json"});
+ const a=document.createElement("a");
+ a.href=URL.createObjectURL(blob);
+ a.download="manifest.training.json";
+ a.click();
+}
+setInterval(refresh,1000); refresh();
+</script>
+</body>
+</html>

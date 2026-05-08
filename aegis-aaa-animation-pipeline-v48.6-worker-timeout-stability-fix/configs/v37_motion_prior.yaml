@@ -1,0 +1,22 @@
+version: V37
+skeletonProfile: UE5_Mannequin
+fps: 60
+maxFrames: 180
+representation:
+  root: [loc_x, loc_y, loc_z]
+  rotation: 6d
+  contacts:
+    - foot_l.ik_lock_alpha
+    - foot_r.ik_lock_alpha
+    - foot_l.plant_lock_alpha
+    - foot_r.plant_lock_alpha
+training:
+  model: MotionPriorTransformer
+  hiddenDim: 384
+  layers: 4
+  heads: 6
+  epochs: 100
+  learningRate: 0.0001
+runtime:
+  exportPlaybackMode: LiveBaseGeneratedOverlay
+  pluginMinimumVersion: V36_LiveBaseGeneratedOverlay

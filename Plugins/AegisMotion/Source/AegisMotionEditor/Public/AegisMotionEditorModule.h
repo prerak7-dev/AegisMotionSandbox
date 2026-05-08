@@ -15,5 +15,10 @@ private:
 	void RegisterVisualizers();
 	void UnregisterVisualizers();
 
+	void RegisterMenus();
+	void UnregisterMenus();
+	void ImportMocapCurvesToSelectedActionAsset();
+	void ExportSelectedAnimSequencesToTrainingJson();
+
 	TSharedPtr<class FComponentVisualizer> ActionComponentVisualizer;
 };

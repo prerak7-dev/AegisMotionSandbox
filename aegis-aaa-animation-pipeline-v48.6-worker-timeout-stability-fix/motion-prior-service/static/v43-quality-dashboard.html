@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><title>Aegis V43 Quality Stack</title>
+<style>body{margin:0;background:#0b0d12;color:#eef2ff;font-family:Segoe UI,Arial,sans-serif}header{padding:28px 34px;background:#121826;border-bottom:1px solid #30384b}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;padding:22px}.card{background:#151923;border:1px solid #30384b;border-radius:16px;padding:18px}code,pre{background:#090b10;border:1px solid #30384b;border-radius:8px;padding:3px 5px}pre{white-space:pre-wrap;padding:12px}a{color:#8db3ff}</style></head>
+<body><header><h1>Aegis V43 Quality Stack</h1><p>From raw data to training JSON to retrieval/time-warp/contact-denoise generation.</p></header>
+<div class="grid">
+<div class="card"><h2>V39</h2><p>Training Clip Exporter bridge: Unreal AnimSequence → Aegis training JSON.</p></div>
+<div class="card"><h2>V40</h2><p>Batch manifest builder for retargeted Manny/Quinn clips.</p><p><a href="/static/training-manifest-builder.html">Open Manifest Builder</a></p></div>
+<div class="card"><h2>V41</h2><p>Motion retrieval + time-warp. Best first production quality path.</p></div>
+<div class="card"><h2>V42</h2><p>Contact-aware denoising prior: rotation/root/velocity/acceleration/contact losses.</p></div>
+<div class="card"><h2>V43</h2><p>Late polish metadata: dynamic head look-at + plant-foot-only late IK.</p></div>
+<div class="card"><h2>Commands</h2><pre>.\scripts\build-motion-dataset.ps1
+.\scripts\train-contact-prior-v42.ps1
+.\scripts\generate-overlay-v43.ps1</pre></div>
+</div></body></html>

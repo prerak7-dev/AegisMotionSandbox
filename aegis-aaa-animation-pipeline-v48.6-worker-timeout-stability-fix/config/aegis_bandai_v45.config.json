@@ -1,0 +1,62 @@
+{
+  "tools": {
+    "gitExe": "git",
+    "blenderExe": "C:/Program Files/Blender Foundation/Blender 5.1/blender.exe",
+    "unrealEditorExe": "C:/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/UnrealEditor.exe",
+    "unrealEditorCmdExe": "C:/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/UnrealEditor-Cmd.exe"
+  },
+  "bandai": {
+    "repoUrl": "https://github.com/BandaiNamcoResearchInc/Bandai-Namco-Research-Motiondataset.git",
+    "repoDir": "C:/Mocap/Bandai-Namco-Research-Motiondataset",
+    "rawExtractDir": "C:/Mocap/Bandai-Namco-Research-Motiondataset/extracted",
+    "selectedClipManifest": "sample-data/manifests/bandai_selected_raw_clips.json",
+    "fbxOutputDir": "C:/Mocap/AegisBandaiFbx",
+    "datasetFolders": [
+      "Bandai-Namco-Research-Motiondataset-1",
+      "Bandai-Namco-Research-Motiondataset-2"
+    ],
+    "contentFilters": [
+      "kick",
+      "run",
+      "dash",
+      "walk-turn-left",
+      "walk-turn-right",
+      "walk_turn_left",
+      "walk_turn_right"
+    ],
+    "styleFilters": [
+      "active",
+      "normal",
+      "masculine",
+      "youthful",
+      "unknown"
+    ],
+    "maxClipsPerContentStyle": 8
+  },
+  "unreal": {
+    "project": "C:/UnrealProjects/AegisMotionSandbox/AegisMotionSandbox.uproject",
+    "pluginDir": "C:/UnrealProjects/AegisMotionSandbox/Plugins/AegisMotion",
+    "importPath": "/Game/AegisMotionTraining/BandaiNamco/Imported",
+    "retargetedPath": "/Game/AegisMotionTraining/BandaiNamco/RetargetedToManny",
+    "ikRetargeterAsset": "/Game/AegisMotionTraining/Retargeters/RTG_Bandai_To_Manny",
+    "trainingJsonOutput": "sample-data/training-json"
+  },
+  "training": {
+    "manifestPath": "sample-data/manifest.bandai.v47.training.json",
+    "datasetOutput": "datasets/bandai_v47_neural_overlay",
+    "checkpointOutput": "checkpoints/bandai_v47_neural_overlay",
+    "exportOutput": "exports/bandai_soccer_kick_overlay_v47.json",
+    "fps": 60,
+    "maxFrames": 180,
+    "epochs": 180,
+    "exportDurationSeconds": 1.35,
+    "includeQuaternionReferenceCurves": false
+  },
+  "metadata": {
+    "license": "CC_BY_NC_4_0",
+    "skeletonProfile": "UE5_Mannequin",
+    "defaultAction": "soccer_kick_overlay",
+    "defaultStyle": "active",
+    "dominantLeg": "right"
+  }
+}

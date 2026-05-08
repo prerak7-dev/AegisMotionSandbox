@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Aegis V48 Quaternion No-Retarget Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+:root{--bg:#090c12;--panel:#131a27;--panel2:#0d1320;--text:#edf3ff;--muted:#aab7d6;--line:#2e3a54;--accent:#8db3ff;--good:#54d99f;--bad:#ff6f79;--warn:#ffd166;--purple:#c5a3ff}
+*{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at top left,#15233f 0,#090c12 360px);color:var(--text);font-family:Segoe UI,Arial,sans-serif}
+header{position:sticky;top:0;z-index:10;background:#101827e8;backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:18px 24px}
+h1{font-size:22px;margin:0 0 8px}.sub{color:var(--muted);font-size:13px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+input,button,select{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px}input,select{min-width:180px}button{cursor:pointer;font-weight:700}button:hover{border-color:var(--accent)}button.danger:hover{border-color:var(--bad);color:#ffdce0}
+main{display:grid;grid-template-columns:450px 1fr;gap:16px;padding:16px}.card{background:linear-gradient(180deg,var(--panel),#111723);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 14px 30px #0006}.card h2{margin-top:0}.job{padding:12px;border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:var(--panel2);cursor:pointer}.job:hover{border-color:var(--accent)}.job.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}.muted{color:var(--muted)}.tiny{font-size:12px}.progress-wrap{height:20px;background:#070a11;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:10px 0}.progress{height:100%;background:linear-gradient(90deg,var(--accent),var(--purple));width:0%;transition:width .3s ease}.status{font-weight:800}.status.COMPLETED{color:var(--good)}.status.FAILED{color:var(--bad)}.status.WAITING_FOR_RETARGET{color:var(--warn)}.status.RUNNING{color:var(--accent)}pre{white-space:pre-wrap;background:#060910;border:1px solid var(--line);border-radius:12px;padding:12px;max-height:460px;overflow:auto;margin:0}.log-line{padding:3px 0;border-bottom:1px solid #ffffff0a;font-family:Consolas,monospace;font-size:12px}.log-line:last-child{border-bottom:0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.kv{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px}.kv .k{font-size:12px;color:var(--muted)}.kv .v{font-size:14px;margin-top:4px;word-break:break-word}.pipeline{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.pill{border:1px solid var(--line);background:#0b1020;border-radius:999px;padding:6px 9px;font-size:12px}.pill.current{border-color:var(--accent);color:var(--accent)}label{font-size:13px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}.note{border:1px solid #35537a;background:#0b1730;border-radius:12px;padding:10px;color:#d9e8ff}@media(max-width:980px){main{grid-template-columns:1fr}header{position:relative}.form-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Aegis V48 Quaternion No-Retarget Pipeline</h1>
+  <div class="sub">V36 gold live-base overlay → Manny/Quinn-native quaternion variants → neural refinement → final import JSON. Bandai, BVH, FBX, and Unreal IK Retargeter are skipped in production mode.</div>
+  <div class="row" style="margin-top:12px">
+    <button onclick="loadJobs()">Refresh jobs</button>
+    <input id="jobIdInput" placeholder="Paste jobId..." size="44"/>
+    <button onclick="selectJob(document.getElementById('jobIdInput').value.trim())">Open job</button>
+    <button class="danger" onclick="deleteSelectedJob()">Delete selected</button>
+    <button class="danger" onclick="deleteTerminalJobs()">Delete completed/failed</button>
+    <label class="muted"><input id="autoRefresh" type="checkbox" checked/> auto-refresh</label>
+    <span id="lastRefresh" class="muted"></span>
+  </div>
+</header>
+<main>
+  <aside>
+    <section class="card">
+      <h2>Start V48 production job</h2>
+      <div class="note tiny">Production path has no retargeting. The generated JSON must contain rot_qx/rot_qy/rot_qz/rot_qw curves and phase metadata for plant, pelvis-open, thigh-drive, knee-snap, ankle-whip, counterbalance, and head focus.</div>
+      <div class="form-grid">
+        <label>Config path<br/><input id="configPath" style="width:100%" value="config/aegis_v48_no_retarget.config.json"/></label>
+        <label>Pipeline mode<br/><select id="pipelineMode" style="width:100%"><option value="V48_QUATERNION_NO_RETARGET">V48 Quaternion No-Retarget</option><option value="LEGACY_BANDAI_EXPERIMENTAL">Legacy Bandai Experimental</option></select></label>
+        <label>Kick style<br/><select id="style" style="width:100%"><option value="instep_power_shot">Instep Power Shot</option><option value="inside_foot_pass">Inside-Foot Pass</option><option value="side_foot_shot">Side-Foot Shot</option><option value="low_driven_kick">Low Driven Kick</option><option value="followthrough_heavy">Follow-Through Heavy</option><option value="short_tap">Short Tap</option><option value="volley_preparation">Volley Preparation</option></select></label>
+        <label>Dominant leg<br/><select id="dominantLeg" style="width:100%"><option>right</option><option>left</option></select></label>
+        <label>Overlay duration seconds<br/><input id="durationSeconds" style="width:100%" type="number" min="0.25" step="0.05" value="1.35"/></label>
+        <label>Training variant count<br/><input id="variantCount" style="width:100%" type="number" min="7" max="80" value="35"/></label>
+        <label>Intensity<br/><input id="intensity" style="width:100%" type="number" min="0" max="1.5" step="0.05" value="1.0"/></label>
+        <label>Follow-through<br/><input id="followThrough" style="width:100%" type="number" min="0" max="1.5" step="0.05" value="0.70"/></label>
+        <label>Plant stability<br/><input id="plantStability" style="width:100%" type="number" min="0" max="1" step="0.05" value="0.92"/></label>
+        <label>Upper-body counterbalance<br/><input id="upperBodyCounterbalance" style="width:100%" type="number" min="0" max="1.5" step="0.05" value="0.78"/></label>
+      </div>
+      <div class="row"><label><input id="skipTraining" type="checkbox"/> skip neural training / use variant retrieval fallback</label></div>
+      <button style="margin-top:12px;width:100%" onclick="startPipeline()">Run V48 job</button>
+      <p class="muted tiny">ML refinement targets: smooth timing, joint coupling, follow-through, contact timing, style/intensity control, jitter removal, and foot-plant preservation.</p>
+    </section>
+    <section class="card" style="margin-top:16px"><h2>Jobs</h2><div id="jobs"></div></section>
+  </aside>
+  <section class="card" id="details"><h2>Selected job</h2><div id="jobDetails" class="muted">Select a job.</div></section>
+</main>
+<script>
+let selectedJobId = null;
+const v48Steps = ['V48_LOAD_GOLD_OVERLAY','V48_GENERATE_SYNTHETIC_VARIANTS','V48_BUILD_QUATERNION_DATASET','V48_TRAIN_QUATERNION_PRIOR','V48_GENERATE_IMPORT_JSON','V48_VALIDATE_IMPORT_JSON','COMPLETE'];
+const legacySteps = ['CLONE_BANDAI_REPO','EXTRACT_BANDAI_DATA','SELECT_BANDAI_CLIPS','OFFLINE_RETARGET_TO_MANNY_JSON','BUILD_TRAINING_MANIFEST','BUILD_TENSOR_DATASET','TRAIN_NEURAL_MOTION_PRIOR','GENERATE_OVERLAY_JSON','VERIFY_OVERLAY_JSON','COMPLETE'];
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
+function fmtTime(s){try{return new Date(s).toLocaleString()}catch{return s}}
+async function api(path, opts={}){const res=await fetch(path,{cache:'no-store',...opts});if(!res.ok)throw new Error(await res.text());const ct=res.headers.get('content-type')||'';return ct.includes('application/json')?await res.json():await res.text();}
+async function startPipeline(){
+  const body={
+    configPath:document.getElementById('configPath').value.trim(),
+    pipelineMode:document.getElementById('pipelineMode').value,
+    skipTraining:document.getElementById('skipTraining').checked,
+    action:'soccer_kick_overlay',
+    kickStyle:document.getElementById('style').value,
+    style:document.getElementById('style').value,
+    dominantLeg:document.getElementById('dominantLeg').value,
+    durationSeconds:Number(document.getElementById('durationSeconds').value),
+    variantCount:Number(document.getElementById('variantCount').value),
+    intensity:Number(document.getElementById('intensity').value),
+    followThrough:Number(document.getElementById('followThrough').value),
+    plantStability:Number(document.getElementById('plantStability').value),
+    upperBodyCounterbalance:Number(document.getElementById('upperBodyCounterbalance').value),
+    pauseForManualRetarget:false
+  };
+  try{const job=await api('/api/v1/pipelines/bandai/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); await selectJob(job.jobId);}catch(e){alert(e.message)}
+}
+async function loadJobs(){try{const jobs=await api('/api/v1/jobs');const el=document.getElementById('jobs');el.innerHTML='';if(!jobs.length){el.innerHTML='<p class="muted">No jobs yet.</p>';return;}jobs.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));for(const j of jobs){const div=document.createElement('div');div.className='job'+(j.jobId===selectedJobId?' active':'');div.onclick=()=>selectJob(j.jobId);const progress=Math.max(0,Math.min(100,j.progress||0));div.innerHTML=`<div><b>${escapeHtml(j.currentStep)}</b></div><div class="muted tiny">${escapeHtml(j.jobId)}</div><div class="progress-wrap"><div class="progress" style="width:${progress}%"></div></div><div><span class="status ${escapeHtml(j.status)}">${escapeHtml(j.status)}</span> · ${progress}%</div><div class="muted tiny">${escapeHtml(fmtTime(j.updatedAt))}</div>`;el.appendChild(div);}document.getElementById('lastRefresh').textContent='Last refresh: '+new Date().toLocaleTimeString();}catch(e){document.getElementById('jobs').innerHTML='<pre>'+escapeHtml(e.message)+'</pre>';}}
+async function selectJob(jobId){if(!jobId)return;selectedJobId=jobId;document.getElementById('jobIdInput').value=jobId;await loadJobs();await loadJobDetails();}
+function pipelineHtml(current){const steps=current&&current.startsWith('V48_')?v48Steps:legacySteps;return '<div class="pipeline">'+steps.map(s=>`<span class="pill ${s===current?'current':''}">${escapeHtml(s.replaceAll('_',' '))}</span>`).join('')+'</div>';}
+async function loadJobDetails(){if(!selectedJobId)return;const detail=document.getElementById('jobDetails');try{const j=await api('/api/v1/jobs/'+encodeURIComponent(selectedJobId));const logs=await api('/api/v1/jobs/'+encodeURIComponent(selectedJobId)+'/logs/tail?limit=140');const progress=Math.max(0,Math.min(100,j.progress||0));detail.innerHTML=`${pipelineHtml(j.currentStep)}<div class="grid"><div class="kv"><div class="k">Status</div><div class="v status ${escapeHtml(j.status)}">${escapeHtml(j.status)}</div></div><div class="kv"><div class="k">Step</div><div class="v">${escapeHtml(j.currentStep)}</div></div><div class="kv"><div class="k">Progress</div><div class="v">${progress}%</div></div><div class="kv"><div class="k">Updated</div><div class="v">${escapeHtml(fmtTime(j.updatedAt))}</div></div></div><div class="progress-wrap" style="height:28px"><div class="progress" style="width:${progress}%"></div></div><p><b>${escapeHtml(j.message||'')}</b></p><div class="grid"><div class="kv"><div class="k">Job ID</div><div class="v">${escapeHtml(j.jobId)}</div></div><div class="kv"><div class="k">Export Path</div><div class="v">${escapeHtml(j.exportPath||'—')}</div></div><div class="kv"><div class="k">Config</div><div class="v">${escapeHtml(j.configPath||'—')}</div></div><div class="kv"><div class="k">Options</div><div class="v"><pre>${escapeHtml(JSON.stringify(j.options||{},null,2))}</pre></div></div></div><h3>Latest logs</h3><div id="logs">${logs.map(l=>'<div class="log-line">'+escapeHtml(l)+'</div>').join('')}</div>`;}catch(e){detail.innerHTML='<pre>'+escapeHtml(e.message)+'</pre>';}}
+async function deleteSelectedJob(){if(!selectedJobId)return alert('Select a job first.');if(!confirm('Delete selected job state and logs from Redis?'))return;try{await api('/api/v1/jobs/'+encodeURIComponent(selectedJobId),{method:'DELETE'});selectedJobId=null;document.getElementById('jobDetails').innerHTML='<span class="muted">Deleted.</span>';await loadJobs();}catch(e){alert(e.message)}}
+async function deleteTerminalJobs(){if(!confirm('Delete all COMPLETED and FAILED job states/logs? Running jobs are kept.'))return;try{const r=await api('/api/v1/jobs?terminalOnly=true',{method:'DELETE'});alert('Deleted '+r.deleted+' jobs.');await loadJobs();if(selectedJobId)await loadJobDetails();}catch(e){alert(e.message)}}
+setInterval(async()=>{if(!document.getElementById('autoRefresh').checked)return;await loadJobs();if(selectedJobId)await loadJobDetails();},1500);loadJobs();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "version": "V46.37",
+  "targetFbx": "C:\\Mocap\\AegisTargets\\SKM_Quinn.fbx",
+  "manifest": "C:\\UnrealProjects\\aegis-aaa-animation-pipeline-v46-spring-kafka-redis\\sample-data\\manifests\\bandai_selected_raw_clips.json",
+  "clipCount": 1,
+  "results": [
+    {
+      "training": "C:\\UnrealProjects\\aegis-aaa-animation-pipeline-v46-spring-kafka-redis\\sample-data\\training-json\\offline-retargeted\\bandai_dash_active_dataset-1_dash_active_001_manny_training.json",
+      "overlay": "C:\\UnrealProjects\\aegis-aaa-animation-pipeline-v46-spring-kafka-redis\\generated\\overlays\\offline-retargeted\\bandai_dash_active_dataset-1_dash_active_001_manny_overlay.json",
+      "frames": 85,
+      "missingSourceBones": [],
+      "missingTargetBones": [],
+      "clipId": "bandai_dash_active_dataset-1_dash_active_001"
+    }
+  ]
+}

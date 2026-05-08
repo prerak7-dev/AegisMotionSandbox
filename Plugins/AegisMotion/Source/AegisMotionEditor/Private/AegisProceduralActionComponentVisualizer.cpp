@@ -48,6 +48,11 @@ USkeletalMeshComponent* FAegisProceduralActionComponentVisualizer::FindSkeletalM
 
 float FAegisProceduralActionComponentVisualizer::EvalAutomaticPhaseWeight(const FAegisActionPhaseBlendDef& Phase, float Time01)
 {
+	if (!Phase.bUseAutomaticPhaseWeight)
+	{
+		return 1.f;
+	}
+
 	const float T = FMath::Clamp(Time01, 0.f, 1.f);
 	const float Start = FMath::Clamp(Phase.StartTime01, 0.f, 1.f);
 	const float Peak = FMath::Clamp(Phase.PeakTime01, Start, 1.f);
@@ -136,13 +141,38 @@ void FAegisProceduralActionComponentVisualizer::EvalGhostOffsetForBone(const FAe
 		const float RotMul = FoundSlot->RotationMultiplier;
 		const float PosMul = FoundSlot->TranslationMultiplier;
 
-		RotX += (FoundSlot->RotX01 ? CurveToSignedSmartEditor(FoundSlot->RotX01->GetFloatValue(T)) : 0.f) * SocketBone.Limits.MaxRotationDegrees.X * RotMul * W;
-		RotY += (FoundSlot->RotY01 ? CurveToSignedSmartEditor(FoundSlot->RotY01->GetFloatValue(T)) : 0.f) * SocketBone.Limits.MaxRotationDegrees.Y * RotMul * W;
-		RotZ += (FoundSlot->RotZ01 ? CurveToSignedSmartEditor(FoundSlot->RotZ01->GetFloatValue(T)) : 0.f) * SocketBone.Limits.MaxRotationDegrees.Z * RotMul * W;
+		const bool bRawRotation = FoundSlot->RotationValueSpace == EAegisCurveValueSpace::RawBvhLocal;
+		const bool bRawTranslation = FoundSlot->TranslationValueSpace == EAegisCurveValueSpace::RawBvhLocal;
 
-		Trans.X += (FoundSlot->PosX01 ? CurveToSignedSmartEditor(FoundSlot->PosX01->GetFloatValue(T)) : 0.f) * SocketBone.Limits.MaxTranslationCm.X * PosMul * W;
-		Trans.Y += (FoundSlot->PosY01 ? CurveToSignedSmartEditor(FoundSlot->PosY01->GetFloatValue(T)) : 0.f) * SocketBone.Limits.MaxTranslationCm.Y * PosMul * W;
-		Trans.Z += (FoundSlot->PosZ01 ? CurveToSignedSmartEditor(FoundSlot->PosZ01->GetFloatValue(T)) : 0.f) * SocketBone.Limits.MaxTranslationCm.Z * PosMul * W;
+		auto EvalRotationAxisDeg = [&](const TObjectPtr<UCurveFloat>& Curve, float MaxDegrees) -> float
+		{
+			if (!Curve)
+			{
+				return 0.f;
+			}
+
+			const float V = Curve->GetFloatValue(T);
+			return bRawRotation ? V : CurveToSignedSmartEditor(V) * MaxDegrees;
+		};
+
+		auto EvalTranslationAxisCm = [&](const TObjectPtr<UCurveFloat>& Curve, float MaxCm) -> float
+		{
+			if (!Curve)
+			{
+				return 0.f;
+			}
+
+			const float V = Curve->GetFloatValue(T);
+			return bRawTranslation ? V : CurveToSignedSmartEditor(V) * MaxCm;
+		};
+
+		RotX += EvalRotationAxisDeg(FoundSlot->RotX01, SocketBone.Limits.MaxRotationDegrees.X) * RotMul * W;
+		RotY += EvalRotationAxisDeg(FoundSlot->RotY01, SocketBone.Limits.MaxRotationDegrees.Y) * RotMul * W;
+		RotZ += EvalRotationAxisDeg(FoundSlot->RotZ01, SocketBone.Limits.MaxRotationDegrees.Z) * RotMul * W;
+
+		Trans.X += EvalTranslationAxisCm(FoundSlot->PosX01, SocketBone.Limits.MaxTranslationCm.X) * PosMul * W;
+		Trans.Y += EvalTranslationAxisCm(FoundSlot->PosY01, SocketBone.Limits.MaxTranslationCm.Y) * PosMul * W;
+		Trans.Z += EvalTranslationAxisCm(FoundSlot->PosZ01, SocketBone.Limits.MaxTranslationCm.Z) * PosMul * W;
 	}
 
 	OutRotDeg = FRotator(RotY, RotZ, RotX);

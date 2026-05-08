@@ -1,0 +1,69 @@
+{
+  "metadata": {
+    "pipelineVersion": "V48",
+    "pipelineMode": "V48_QUATERNION_NO_RETARGET",
+    "defaultAction": "soccer_kick_overlay",
+    "defaultStyle": "instep_power_shot",
+    "dominantLeg": "right",
+    "skeletonProfile": "UE5_Mannequin_Quinn_Manny",
+    "license": "PROJECT_INTERNAL_SYNTHETIC_DERIVED_FROM_USER_GOLD_REFERENCE"
+  },
+  "v48": {
+    "goldOverlayPath": "sample-data/gold/ai_soccer_kick_livebase_overlay_v36.json",
+    "variantOutputDir": "generated/v48/quaternion_variants",
+    "variantManifestPath": "generated/v48/manifest.v48.quaternion_variants.json",
+    "variantCount": 35,
+    "style": "instep_power_shot",
+    "dominantLeg": "right",
+    "intensity": 1.0,
+    "followThrough": 0.7,
+    "plantStability": 0.92,
+    "upperBodyCounterbalance": 0.78,
+    "durationSeconds": 1.35,
+    "fps": 120,
+    "neuralBlend": 0.35,
+    "seed": 48,
+    "phaseGenerationParameters": {
+      "plantFootStaysGrounded": true,
+      "pelvisOpensBeforeThighDrive": true,
+      "thighLeadsBeforeCalfExtension": true,
+      "kneeSnapsThroughNearStrike": true,
+      "footFollowsKneeThenWhipsThrough": true,
+      "spineAndArmsCounterbalance": true,
+      "headStaysBallFocused": true,
+      "biomechanics": [
+        "pelvis opens",
+        "plant side stabilizes",
+        "kicking hip loads",
+        "thigh accelerates",
+        "knee snaps",
+        "ankle whips",
+        "torso counters",
+        "arms balance",
+        "head remains focused"
+      ]
+    },
+    "mlRefinementTargets": {
+      "smoothTiming": true,
+      "correctJointCoupling": true,
+      "addRealisticFollowThrough": true,
+      "predictContactTiming": true,
+      "adjustStyleAndIntensity": true,
+      "removeJitter": true,
+      "preserveFootPlant": true
+    }
+  },
+  "training": {
+    "manifestPath": "generated/v48/manifest.v48.quaternion_variants.json",
+    "datasetOutput": "generated/v48/tensor_dataset",
+    "checkpointOutput": "generated/v48/checkpoints",
+    "exportOutput": "exports/aegis_v48_quaternion_soccer_kick_overlay.json",
+    "fps": 120,
+    "maxFrames": 220,
+    "epochs": 30,
+    "lr": 0.0001,
+    "hiddenDim": 256,
+    "layers": 3,
+    "heads": 4
+  }
+}

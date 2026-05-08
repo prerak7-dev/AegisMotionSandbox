@@ -1,0 +1,8 @@
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\orchestrator-service\src\main\java\com\aegis\orchestrator\AegisOrchestratorApplication.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\orchestrator-service\src\main\java\com\aegis\orchestrator\api\DiagnosticsController.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\orchestrator-service\src\main\java\com\aegis\orchestrator\api\GlobalExceptionHandler.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\orchestrator-service\src\main\java\com\aegis\orchestrator\api\JobController.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\orchestrator-service\src\main\java\com\aegis\orchestrator\config\JacksonConfig.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\orchestrator-service\src\main\java\com\aegis\orchestrator\service\JobStore.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\orchestrator-service\src\main\java\com\aegis\orchestrator\service\PipelinePublisher.java
+C:\UnrealProjects\aegis-aaa-animation-pipeline-v48.6-worker-timeout-stability-fix\backend\orchestrator-service\src\main\java\com\aegis\orchestrator\service\PipelineService.java

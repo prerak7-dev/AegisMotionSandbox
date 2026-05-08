@@ -1,0 +1,15 @@
+{
+  "datasetName": "aegis_v37_motion_prior_sample_manifest",
+  "skeletonProfile": "UE5_Mannequin",
+  "clips": [
+    {
+      "id": "seed_soccer_kick_overlay_v36",
+      "path": "seed/ai_soccer_kick_livebase_overlay_v36_seed.json",
+      "action": "soccer_kick_overlay",
+      "style": "powerful",
+      "dominantLeg": "right",
+      "quality": "seed_generated",
+      "notes": "Use only to validate the pipeline. Replace with retargeted real animation clips."
+    }
+  ]
+}

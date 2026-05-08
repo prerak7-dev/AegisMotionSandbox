@@ -1,0 +1,8 @@
+com\aegis\common\events\AegisTopics.class
+com\aegis\common\model\PipelineStep.class
+com\aegis\common\events\PipelineCommand.class
+com\aegis\common\events\PipelineEvent.class
+com\aegis\common\dto\ContinueJobRequest.class
+com\aegis\common\dto\PipelineRunRequest.class
+com\aegis\common\model\JobState.class
+com\aegis\common\model\JobStatus.class

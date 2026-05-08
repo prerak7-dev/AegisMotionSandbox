@@ -22,6 +22,12 @@ struct FAegisSocketBoneRuntimeCache
 
 	FRotator SmoothedRotDeg = FRotator::ZeroRotator;
 	FVector SmoothedTransPS = FVector::ZeroVector;
+	FQuat SmoothedQuat = FQuat::Identity;
+
+	float SmoothedIKLockAlpha = 0.0f;
+	float SmoothedPlantLockAlpha = 0.0f;
+	bool bHasPlantLockTarget = false;
+	FVector PlantLockTargetCS = FVector::ZeroVector;
 
 	FRotator RotVelocityDeg = FRotator::ZeroRotator;
 	FVector TransVelocityPS = FVector::ZeroVector;
@@ -107,8 +113,18 @@ private:
 		const FAegisSocketBoneRuntimeCache& SocketBone,
 		float Time01,
 		float ActionAlpha,
-		FRotator& OutRotDeg,
-		FVector& OutTransPS) const;
+		EAegisActionPlaybackMode PlaybackMode,
+		FVector& OutRotDegXYZ,
+		FQuat& OutRawQuat,
+		bool& bOutUseRawQuaternion,
+		FVector& OutTransPS,
+		EAegisBvhRotationOrder& OutRotationOrder,
+		bool& bOutBypassSmoothing,
+		bool& bOutReplaceLocalRotation,
+		bool& bOutUseCapturedStartPoseBase,
+		bool& bOutUseLiveBasePose,
+		float& OutIKLockAlpha,
+		float& OutPlantLockAlpha) const;
 
 	void ApplySocketBoneChain(
 		FComponentSpacePoseContext& Output,
@@ -117,5 +133,7 @@ private:
 		FAegisActionChainRuntimeCache& Cache,
 		float Time01,
 		float ActionAlpha,
-		float DT);
+		float DT,
+		const FAegisGeneratedFootLockSettings& FootLockSettings,
+		EAegisActionPlaybackMode PlaybackMode);
 };

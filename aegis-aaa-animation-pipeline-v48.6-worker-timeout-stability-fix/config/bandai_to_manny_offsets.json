@@ -1,0 +1,116 @@
+{
+  "version": "V46.37",
+  "description": "Target-local XYZ Euler degree offsets applied after offline retargeting. Start all zero; tune here instead of Unreal pose UI.",
+  "perBone": {
+    "pelvis": [
+      0,
+      0,
+      0
+    ],
+    "spine_01": [
+      0,
+      0,
+      0
+    ],
+    "spine_02": [
+      0,
+      0,
+      0
+    ],
+    "spine_03": [
+      0,
+      0,
+      0
+    ],
+    "neck_01": [
+      0,
+      0,
+      0
+    ],
+    "head": [
+      0,
+      0,
+      0
+    ],
+    "thigh_l": [
+      0,
+      0,
+      0
+    ],
+    "calf_l": [
+      0,
+      0,
+      0
+    ],
+    "foot_l": [
+      0,
+      0,
+      0
+    ],
+    "ball_l": [
+      0,
+      0,
+      0
+    ],
+    "thigh_r": [
+      0,
+      0,
+      0
+    ],
+    "calf_r": [
+      0,
+      0,
+      0
+    ],
+    "foot_r": [
+      0,
+      0,
+      0
+    ],
+    "ball_r": [
+      0,
+      0,
+      0
+    ],
+    "clavicle_l": [
+      0,
+      0,
+      0
+    ],
+    "upperarm_l": [
+      0,
+      0,
+      0
+    ],
+    "lowerarm_l": [
+      0,
+      0,
+      0
+    ],
+    "hand_l": [
+      0,
+      0,
+      0
+    ],
+    "clavicle_r": [
+      0,
+      0,
+      0
+    ],
+    "upperarm_r": [
+      0,
+      0,
+      0
+    ],
+    "lowerarm_r": [
+      0,
+      0,
+      0
+    ],
+    "hand_r": [
+      0,
+      0,
+      0
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "version": "V47.0",
+  "targetSkeletonFbx": "C:/Mocap/AegisTargets/SKM_Quinn.fbx",
+  "outputTrainingJsonDir": "sample-data/training-json/offline-retargeted",
+  "outputOverlayJsonDir": "generated/overlays/offline-retargeted-preview",
+  "boneMap": "config/bandai_to_manny_bone_map.json",
+  "offsets": "config/bandai_to_manny_offsets.json",
+  "fps": 30,
+  "maxClips": 16,
+  "sourceBvhScale": 1.0,
+  "emitEveryNthFrame": 1,
+  "rootTranslationScale": 1.0,
+  "contact": {
+    "heightThresholdCm": 4.0,
+    "velocityThresholdCmPerSec": 45.0,
+    "smoothWindowFrames": 2
+  }
+}
