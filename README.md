@@ -352,18 +352,6 @@ The strongest portfolio narrative for this project is the combination of:
 
 This makes AegisMotionSandbox useful not only as an animation plugin, but also as evidence of system design, tooling sensibility, and backend-service thinking applied to game development.
 
-## Suggested demo flow
-
-A strong two-minute technical demo can follow this structure:
-
-1. Show the base character pose and locomotion.
-2. Trigger an Aegis procedural action from gameplay.
-3. Enable debug visualization to show affected bones and curve values.
-4. Scrub the action in editor mode to show authoring control.
-5. Import or show generated overlay JSON.
-6. Show how the action asset exposes editable curves.
-7. Re-run the action after tuning values.
-8. End with the service pipeline diagram and explain Java/Spring Boot + Redis + Kafka processing.
 
 ## Roadmap
 
